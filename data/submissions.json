@@ -1,0 +1,331 @@
+[
+  {
+    "id": "sub_1",
+    "studentName": "أمين العلمي",
+    "student_name": "أمين العلمي",
+    "submittedAt": "2026-06-07T13:36:51.831Z",
+    "answers": {
+      "philosophyMeaning": "بالنسبة لي، الفلسفة هي محاولة لفهم الوجود والتساؤل المستمر عن طبيعة الأشياء ومبادئ الأخلاق والمعرفة. ليست مجرد ترف فكري بل دليل للحياة.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أشعر برغبة عارمة في معرفة كيف فكر العباقرة القدماء في قضايا لا تزال تشغلنا اليوم مثل العدالة والحقيقة.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، لأنني أحب التحديات الفكرية، وأعتقد أن التعبير عن الرأي المنطقي ممتع للفهم الذاتي."
+    },
+    "responses": {
+      "philosophyMeaning": "بالنسبة لي، الفلسفة هي محاولة لفهم الوجود والتساؤل المستمر عن طبيعة الأشياء ومبادئ الأخلاق والمعرفة. ليست مجرد ترف فكري بل دليل للحياة.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أشعر برغبة عارمة في معرفة كيف فكر العباقرة القدماء في قضايا لا تزال تشغلنا اليوم مثل العدالة والحقيقة.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، لأنني أحب التحديات الفكرية، وأعتقد أن التعبير عن الرأي المنطقي ممتع للفهم الذاتي."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 5,
+        "cognitiveCuriosity": 95,
+        "shallowThinking": 10,
+        "criticalThinking": 90
+      },
+      "classification": "تفكير نقدي",
+      "explanation": "يظهر التلميذ نضجاً فكرياً متميزاً من خلال فهمه للفلسفة كدليل عملي وتساؤل مستمر، مع نزوع واضح لتحليل الأمثلة الواقعية والمشاركة الإيجابية في النقاشات الحجاجية.",
+      "pedagogicalRecommendation": "مشاركة التلميذ في قيادة حلقات النقاش الصيفية وصياغة أسئلة إشكالية لتحفيز زملائه على بناء الحجج."
+    },
+    "teacherNotes": "تلميذ واعد جداً ولديه نضج لغوي وحجاجي ملموس.",
+    "teacher_id": "TCH-001",
+    "teacher_email": "professeur@philoscan.edu",
+    "session_id": "PS-DE7M00",
+    "institution": "ثانوية ابن رشد التأهيلية",
+    "level": "جذع مشترك",
+    "stream": "العلوم",
+    "class": "3"
+  },
+  {
+    "id": "sub_2",
+    "studentName": "ياسمين الناصري",
+    "student_name": "ياسمين الناصري",
+    "submittedAt": "2026-06-07T07:36:51.831Z",
+    "answers": {
+      "philosophyMeaning": "أسمع أنها كلام غامض ومعقد لا فائدة منه، ويؤدي فقط إلى الشك والمشاكل الفكرية والابتعاد عن الواقع.",
+      "sourceOfIdea": "المحيط الاجتماعي",
+      "feelingWhenHearing": "خوف",
+      "feelingJustification": "لأن هناك من يقول إن الفلسفة صعبة جداً في الامتحانات الوطنية ونسب الفشل فيها مرتفعة، وتجعلك تشك في معتقداتك.",
+      "reactionToFreedomQuestion": "أعتبره صعباً",
+      "selectedPhilosophicalQuestions": [
+        "ما أكبر عدد؟"
+      ],
+      "valueRating": 2,
+      "philosophyPrimaryGoal": "النجاح الدراسي",
+      "debateReaction": "أتوتر",
+      "expectSuccess": "لا، نظراً لتعقيد المصطلحات وعدم وجود طريقة واضحة للحفظ والحصول على الإجابة الصحيحة الوحيدة."
+    },
+    "responses": {
+      "philosophyMeaning": "أسمع أنها كلام غامض ومعقد لا فائدة منه، ويؤدي فقط إلى الشك والمشاكل الفكرية والابتعاد عن الواقع.",
+      "sourceOfIdea": "المحيط الاجتماعي",
+      "feelingWhenHearing": "خوف",
+      "feelingJustification": "لأن هناك من يقول إن الفلسفة صعبة جداً في الامتحانات الوطنية ونسب الفشل فيها مرتفعة، وتجعلك تشك في معتقداتك.",
+      "reactionToFreedomQuestion": "أعتبره صعباً",
+      "selectedPhilosophicalQuestions": [
+        "ما أكبر عدد؟"
+      ],
+      "valueRating": 2,
+      "philosophyPrimaryGoal": "النجاح الدراسي",
+      "debateReaction": "أتوتر",
+      "expectSuccess": "لا، نظراً لتعقيد المصطلحات وعدم وجود طريقة واضحة للحفظ والحصول على الإجابة الصحيحة الوحيدة."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 90,
+        "cognitiveCuriosity": 20,
+        "shallowThinking": 60,
+        "criticalThinking": 15
+      },
+      "classification": "خوف معرفي",
+      "explanation": "تعاني التلميذة من تمثلات سلبية مسبقة تجعلها تنظر للفلسفة كمصدر للتهديد الفكري والتوتر الامتحاني، مع غياب شبه تام للاستعداد الحجاجي والفضول المعرفي.",
+      "pedagogicalRecommendation": "نزع القداسة والغموض عن الفلسفة من خلال أنشطة تفكيك الأوهام، وبيان أن الأسئلة الفلسفية تنطلق من اهتماماتها اليومية البسيطة."
+    },
+    "teacher_id": "TCH-001",
+    "teacher_email": "professeur@philoscan.edu",
+    "session_id": "PS-DE7M00",
+    "institution": "ثانوية ابن رشد التأهيلية",
+    "level": "جذع مشترك",
+    "stream": "العلوم",
+    "class": "3"
+  },
+  {
+    "id": "sub_3",
+    "studentName": "سفيان الفهري",
+    "student_name": "سفيان الفهري",
+    "submittedAt": "2026-06-07T02:36:51.831Z",
+    "answers": {
+      "philosophyMeaning": "هي مادة دراسية نحفظ فيها مواقف الفلاسفة مثل سقراط وأفلاطون من أجل تفريغها في ورقة الامتحان للحصول على نقطة المرور.",
+      "sourceOfIdea": "المدرسة",
+      "feelingWhenHearing": "حياد",
+      "feelingJustification": "لا أشعر بشيء خاص تجاهها، هي مجرد معامل في الامتحان الوطني كباقي المواد وتتطلب الحفظ الجيد فقط.",
+      "reactionToFreedomQuestion": "أبحث عن جواب جاهز",
+      "selectedPhilosophicalQuestions": [
+        "كيف تعمل السيارة؟"
+      ],
+      "valueRating": 3,
+      "philosophyPrimaryGoal": "حفظ المعلومات",
+      "debateReaction": "أستمع فقط",
+      "expectSuccess": "نعم، إذا قمت بحفظ المنهجيات الجاهزة التي يعطيها الأساتذة وتدربت على تكرار الأقوال الفلسفية الشائعة."
+    },
+    "responses": {
+      "philosophyMeaning": "هي مادة دراسية نحفظ فيها مواقف الفلاسفة مثل سقراط وأفلاطون من أجل تفريغها في ورقة الامتحان للحصول على نقطة المرور.",
+      "sourceOfIdea": "المدرسة",
+      "feelingWhenHearing": "حياد",
+      "feelingJustification": "لا أشعر بشيء خاص تجاهها، هي مجرد معامل في الامتحان الوطني كباقي المواد وتتطلب الحفظ الجيد فقط.",
+      "reactionToFreedomQuestion": "أبحث عن جواب جاهز",
+      "selectedPhilosophicalQuestions": [
+        "كيف تعمل السيارة؟"
+      ],
+      "valueRating": 3,
+      "philosophyPrimaryGoal": "حفظ المعلومات",
+      "debateReaction": "أستمع فقط",
+      "expectSuccess": "نعم، إذا قمت بحفظ المنهجيات الجاهزة التي يعطيها الأساتذة وتدربت على تكرار الأقوال الفلسفية الشائعة."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 30,
+        "cognitiveCuriosity": 15,
+        "shallowThinking": 85,
+        "criticalThinking": 20
+      },
+      "classification": "تفكير سطحي",
+      "explanation": "يربط التلميذ الفلسفة بالبعد الأدواتي والتحصيل الدراسي القائم على الحفظ والتكرار المنهجي، دون وعي حقيقي بوظيفتها في بناء الفلاسفة وتطوير الفكر الذاتي.",
+      "pedagogicalRecommendation": "وضعه في وضعية مشكلة تحرج قناعاته الفكرية المحفوظة سلفاً وتدفعه لاكتشاف نسبية المعرفة وحاجته لبناء موقف خاص."
+    },
+    "teacher_id": "TCH-001",
+    "teacher_email": "professeur@philoscan.edu",
+    "session_id": "PS-DE7M00",
+    "institution": "ثانوية ابن رشد التأهيلية",
+    "level": "جذع مشترك",
+    "stream": "العلوم",
+    "class": "3"
+  },
+  {
+    "id": "sub_4",
+    "studentName": "مريم الصويري",
+    "student_name": "مريم الصويري",
+    "submittedAt": "2026-06-06T17:36:51.831Z",
+    "answers": {
+      "philosophyMeaning": "طريقة للتفكير الحر ومناقشة الآراء المختلفة بدون قيود مسبقة. أرى أنها تفتح آفاقاً جديدة وتكسر الملل الفكري اليومي.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أشعر بالانجداب دائماً للمواضيع الكبرى مثل الاختلاف والغير والوعي، وأبحث دائماً عنها في منصات التواصل كاليوتيوب والبودكاست.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "هل الخير موجود؟",
+        "لماذا نعيش؟"
+      ],
+      "valueRating": 4,
+      "philosophyPrimaryGoal": "النقاش",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، أتوقع النجاح لأنني أتمتع بأسلوب حواري وأحب التعبير عن آرائي بالكتابة والنقاش الحر."
+    },
+    "responses": {
+      "philosophyMeaning": "طريقة للتفكير الحر ومناقشة الآراء المختلفة بدون قيود مسبقة. أرى أنها تفتح آفاقاً جديدة وتكسر الملل الفكري اليومي.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أشعر بالانجداب دائماً للمواضيع الكبرى مثل الاختلاف والغير والوعي، وأبحث دائماً عنها في منصات التواصل كاليوتيوب والبودكاست.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "هل الخير موجود؟",
+        "لماذا نعيش؟"
+      ],
+      "valueRating": 4,
+      "philosophyPrimaryGoal": "النقاش",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، أتوقع النجاح لأنني أتمتع بأسلوب حواري وأحب التعبير عن آرائي بالكتابة والنقاش الحر."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 10,
+        "cognitiveCuriosity": 85,
+        "shallowThinking": 25,
+        "criticalThinking": 75
+      },
+      "classification": "فضول معرفي",
+      "explanation": "تمتلك التلميذة دافعية معرفية واعدة وشغفاً بالصيغ الحوارية الحرة، إلا أنها تحتاج إلى صقل هذه الطاقة في قوالب منهجية حجاجية صارمة لتجنب الانزلاق نحو سجال غير منتج.",
+      "pedagogicalRecommendation": "توجيه فضولها نحو القراءات المنظمة، وإشراكها في نوادي المناظرة المدرسية لتعلم استراتيجيات المحاجة المنهجية."
+    },
+    "teacher_id": "TCH-001",
+    "teacher_email": "professeur@philoscan.edu",
+    "session_id": "PS-DE7M00",
+    "institution": "ثانوية ابن رشد التأهيلية",
+    "level": "جذع مشترك",
+    "stream": "العلوم",
+    "class": "3"
+  },
+  {
+    "id": "sub_r1ewvq5sa",
+    "studentName": "مجرّب التشخيص",
+    "student_name": "مجرّب التشخيص",
+    "submittedAt": "2026-06-07T19:21:00.968Z",
+    "answers": {
+      "philosophyMeaning": "محاولة مستمرة للتفكير النقدي والبحث عن حقيقة الوجود وحرية الإنسان.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أحب المعرفة واستكشاف أطروحات الفلاسفة عبر التاريخ.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، متفائل ومستعد لبذل المجهود الفكري."
+    },
+    "responses": {
+      "philosophyMeaning": "محاولة مستمرة للتفكير النقدي والبحث عن حقيقة الوجود وحرية الإنسان.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أحب المعرفة واستكشاف أطروحات الفلاسفة عبر التاريخ.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، متفائل ومستعد لبذل المجهود الفكري."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 5,
+        "cognitiveCuriosity": 95,
+        "shallowThinking": 10,
+        "criticalThinking": 90
+      },
+      "classification": "فضول معرفي",
+      "explanation": "يظهر التلميذ شغفاً كبيراً بالمعرفة الفلسفية واستكشافها، مع ثقة عالية بالذات وقدرة واعدة على التفكير النقدي المنظم.",
+      "pedagogicalRecommendation": "توجيه فضوله المعرفي عبر تكليفه بإعداد عروض ثنائية أو بحوث قصيرة تقارن بين أطروحات فلسفية مختلفة وتوظيفها في معالجة إشكالات راهنة."
+    },
+    "teacher_id": "TCH-002",
+    "teacherId": "TCH-002",
+    "teacher_email": "elmezraouiimad77@gmail.com",
+    "teacherEmail": "elmezraouiimad77@gmail.com",
+    "session_id": "PS-FD3AK0",
+    "sessionId": "PS-FD3AK0",
+    "institution": "الثانوية الثأهيلية خميس المضيق",
+    "level": "جذع مشترك",
+    "stream": "الآداب والعلوم الإنسانية",
+    "class": "2",
+    "classNumber": "2"
+  },
+  {
+    "id": "sub_wgrpsa5v5",
+    "studentName": "مجرّب التشخيص",
+    "student_name": "مجرّب التشخيص",
+    "submittedAt": "2026-06-07T19:27:19.811Z",
+    "answers": {
+      "philosophyMeaning": "محاولة مستمرة للتفكير النقدي والبحث عن حقيقة الوجود وحرية الإنسان.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أحب المعرفة واستكشاف أطروحات الفلاسفة عبر التاريخ.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، متفائل ومستعد لبذل المجهود الفكري."
+    },
+    "responses": {
+      "philosophyMeaning": "محاولة مستمرة للتفكير النقدي والبحث عن حقيقة الوجود وحرية الإنسان.",
+      "sourceOfIdea": "الإنترنت",
+      "feelingWhenHearing": "فضول",
+      "feelingJustification": "أحب المعرفة واستكشاف أطروحات الفلاسفة عبر التاريخ.",
+      "reactionToFreedomQuestion": "أفكر في أمثلة من الواقع",
+      "selectedPhilosophicalQuestions": [
+        "لماذا نعيش؟",
+        "هل الخير موجود؟"
+      ],
+      "valueRating": 5,
+      "philosophyPrimaryGoal": "تعلم التفكير",
+      "debateReaction": "أشارك برأيي",
+      "expectSuccess": "نعم، متفائل ومستعد لبذل المجهود الفكري."
+    },
+    "analysis": {
+      "metrics": {
+        "cognitiveFear": 5,
+        "cognitiveCuriosity": 90,
+        "shallowThinking": 10,
+        "criticalThinking": 95
+      },
+      "classification": "تفكير نقدي",
+      "explanation": "يظهر التلميذ وعياً منهجياً عميقاً بالفلسفة كأداة للنقد والمساءلة، مدفوعاً بفضول معرفي عالٍ ورغبة مستمرة في تفكيك المفاهيم.",
+      "pedagogicalRecommendation": "توجيه التلميذ نحو قيادة المناقشات الفصلية وصياغة أطروحات فلسفية مركبة تعزز بنيته الحجاجية."
+    },
+    "teacher_id": "TCH-002",
+    "teacherId": "TCH-002",
+    "teacher_email": "elmezraouiimad77@gmail.com",
+    "teacherEmail": "elmezraouiimad77@gmail.com",
+    "session_id": "PS-FD3AK0",
+    "sessionId": "PS-FD3AK0",
+    "institution": "الثانوية الثأهيلية خميس المضيق",
+    "level": "جذع مشترك",
+    "stream": "الآداب والعلوم الإنسانية",
+    "class": "2",
+    "classNumber": "2"
+  }
+]

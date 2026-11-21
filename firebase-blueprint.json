@@ -1,0 +1,139 @@
+{
+  "entities": {
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Represents a teacher user profile in the diagnostic platform",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email address of the teacher" },
+        "fullName": { "type": "string", "description": "Full name of the teacher" },
+        "school": { "type": "string", "description": "School name where the teacher teaches" },
+        "regionalAcademy": { "type": "string", "description": "Regional educational academy" },
+        "province": { "type": "string", "description": "Province of employment" },
+        "role": { "type": "string", "enum": ["teacher", "admin"], "description": "Access privileges under RBAC" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the teacher registered" }
+      },
+      "required": ["email", "fullName", "role"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Platform global Super Administrator account",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email of the admin" },
+        "fullName": { "type": "string", "description": "Full name" },
+        "role": { "type": "string", "enum": ["admin"], "description": "Must be admin" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Created at" }
+      },
+      "required": ["email", "fullName", "role"]
+    },
+    "Session": {
+      "title": "Diagnostic Session",
+      "description": "A diagnostic session code created by a teacher for a classroom of students",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Tracking ID of the diagnostic session" },
+        "teacherId": { "type": "string", "description": "Firebase Auth UID of the owner teacher" },
+        "teacherEmail": { "type": "string", "description": "Email of parent teacher" },
+        "institution": { "type": "string", "description": "School institution name" },
+        "level": { "type": "string", "description": "Grade level" },
+        "stream": { "type": "string", "description": "Stream or branch of study" },
+        "class": { "type": "string", "description": "Class code/group number" },
+        "classNumber": { "type": "string", "description": "Class number identifier" },
+        "title": { "type": "string", "description": "Diagnostic session title" },
+        "province": { "type": "string", "description": "Province or directorate" },
+        "isActive": { "type": "boolean", "description": "Is the session accepting submissions" },
+        "supervisedMode": { "type": "boolean", "description": "Anti-cheat integrity monitoring flag" },
+        "formId": { "type": "string", "description": "Associated form template identifier" },
+        "formTitle": { "type": "string", "description": "Associated form template title" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "teacherId", "teacherEmail", "class", "isActive"]
+    },
+    "Submission": {
+      "title": "Student Submission",
+      "description": "A student's assessment response and its automatic diagnostic analysis",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Submission document identifier" },
+        "studentName": { "type": "string", "description": "Arabic full name of student" },
+        "answers": { "type": "object", "description": "Object containing the answers" },
+        "analysis": { "type": "object", "description": "Pedagogical assessment output from analyzer" },
+        "sessionId": { "type": "string", "description": "UUID or uppercase short code of the matching session" },
+        "teacherId": { "type": "string", "description": "UID of session owner teacher" },
+        "teacherEmail": { "type": "string", "description": "Email of session owner teacher" },
+        "teacherNotes": { "type": "string", "description": "Teacher pedagogical notes" },
+        "overriddenClassification": { "type": "string", "description": "Optional teacher-overridden classification" },
+        "deliveryReceiptId": { "type": "string", "description": "Verified delivery receipt identifier" },
+        "deliveredAt": { "type": "string", "format": "date-time", "description": "Timestamp when submission was delivered" },
+        "reliabilityIndex": { "type": "integer", "description": "Integrity score 0-100" },
+        "institution": { "type": "string", "description": "Institution name" },
+        "level": { "type": "string", "description": "Grade level" },
+        "stream": { "type": "string", "description": "Stream of study" },
+        "classNumber": { "type": "string", "description": "Class group identifier" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "cloudSyncedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentName", "answers", "analysis", "sessionId", "teacherId"]
+    },
+    "Form": {
+      "title": "Questionnaire Form",
+      "description": "Represents a questionnaire template or draft created by a teacher",
+      "type": "object",
+      "properties": {
+        "formId": { "type": "string", "description": "Unique questionnaire ID" },
+        "title": { "type": "string", "description": "Title of the form" },
+        "description": { "type": "string", "description": "Form description" },
+        "teacherId": { "type": "string", "description": "Firebase Auth UID of the owner teacher" },
+        "teacherEmail": { "type": "string", "description": "Email of the owner teacher" },
+        "questions": { "type": "array", "description": "List of question objects" },
+        "status": { "type": "string", "enum": ["saved", "published", "ready"], "description": "Status of the form" },
+        "isTemplate": { "type": "boolean", "description": "True if the form is a standard ready-to-use template" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["formId", "title", "teacherId", "status"]
+    },
+    "Stats": {
+      "title": "Platform Statistics Counters",
+      "description": "Aggregated live counts of platform activity cached on Firestore",
+      "type": "object",
+      "properties": {
+        "teachersCount": { "type": "integer" },
+        "schoolsCount": { "type": "integer" },
+        "sessionsCount": { "type": "integer" },
+        "submissionsCount": { "type": "integer" },
+        "studentsCount": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["teachersCount", "schoolsCount", "sessionsCount", "submissionsCount", "studentsCount"]
+    }
+  },
+  "firestore": {
+    "/teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Collection of teacher profiles indexed by uid"
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Collection of Super Administrators with central platform management authorization"
+    },
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Diagnostic sessions indexed by sessionId"
+    },
+    "/submissions/{submissionId}": {
+      "schema": "Submission",
+      "description": "Students submissions mapped with AI-supported diagnostics"
+    },
+    "/forms/{formId}": {
+      "schema": "Form",
+      "description": "Collection of forms and templates"
+    },
+    "/stats/{statId}": {
+      "schema": "Stats",
+      "description": "Cache of live SaaS activity statistics counters"
+    }
+  }
+}

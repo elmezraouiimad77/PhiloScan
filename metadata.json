@@ -1,0 +1,6 @@
+{
+  "name": "فِيلوسكان - PhiloScan",
+  "description": "منصة نماء تربوية لتشخيص تمثلات وتصورات التلاميذ حول الفلسفة وتصنيفها وتحليلها بالذكاء الاصطناعي لتوجيه تدريسها.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

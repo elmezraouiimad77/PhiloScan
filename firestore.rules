@@ -1,0 +1,247 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // GLOBAL SECURITY HELPERS & PRIMITIVES
+    // ============================================
+
+    // Default catch-all deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Alphanumeric ID validation protecting against path poisoning & exhaustion attacks
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Context getters
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Active Super-Admin verification check
+    // Bootstrapped by static email comparison or dynamic administrative record
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'phillofikr@gmail.com' || 
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Active role validation to check if email matches authenticated context and has registration
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    // ============================================
+    // COLLECTION 1: TEACHER PROFILES
+    // ============================================
+    match /teachers/{teacherId} {
+      
+      function isValidTeacher(data) {
+        return data.email is string && data.email.size() <= 200 &&
+               data.fullName is string && data.fullName.size() <= 256 &&
+               data.role is string && (data.role == 'teacher' || data.role == 'admin');
+      }
+
+      // Read access: Restricted to the teacher themselves, or elevated Super Admin
+      allow get: if isSignedIn() && (request.auth.uid == teacherId || isAdmin());
+      allow list: if isAdmin();
+
+      // Creation safety: Prevent self-assigned admin privileges during initial registration
+      allow create: if isSignedIn() && request.auth.uid == teacherId && 
+                    isValidTeacher(incoming()) && 
+                    (incoming().role == 'teacher' || isAdmin());
+
+      // Update safety: Block editing of immutable system parameters except by Admin
+      allow update: if isSignedIn() && (
+        isAdmin() || (
+          request.auth.uid == teacherId &&
+          isValidTeacher(incoming()) &&
+          incoming().role == existing().role &&
+          incoming().email == existing().email &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'school', 'regionalAcademy', 'province'])
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION 2: CENTRAL ADMINISTRATORS
+    // ============================================
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION 3: DIAGNOSTIC SESSIONS
+    // ============================================
+    match /sessions/{sessionId} {
+
+      function isValidSession(data) {
+        return isValidId(data.sessionId) &&
+               data.teacherId is string && data.teacherId.size() <= 128 &&
+               data.class is string && data.class.size() <= 128 &&
+               data.isActive is bool &&
+               (!('title' in data) || (data.title is string && data.title.size() <= 200)) &&
+               (!('province' in data) || (data.province is string && data.province.size() <= 120)) &&
+               (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
+               (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
+               (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
+               (!('formId' in data) || (data.formId is string && data.formId.size() <= 120)) &&
+               (!('formTitle' in data) || (data.formTitle is string && data.formTitle.size() <= 200)) &&
+               (!('supervisedMode' in data) || data.supervisedMode is bool);
+      }
+
+      // Single-document lookup (get) is public so students can resolve the session code.
+      // Database lists must be gated to the owner or Super Admin (Query Enforcer).
+      allow get: if isValidId(sessionId);
+      allow list: if isSignedIn() && (resource.data.teacherId == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() && isValidId(sessionId) && (
+        isAdmin() || (
+          incoming().teacherId == request.auth.uid &&
+          isValidSession(incoming()) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time
+        )
+      );
+
+      allow update: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming()) && (
+        isAdmin() || (
+          existing().teacherId == request.auth.uid &&
+          incoming().teacherId == existing().teacherId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'class', 'classNumber', 'institution', 'isActive', 'level', 'stream',
+            'title', 'province', 'supervisedMode', 'formId', 'formTitle', 'teacherEmail', 'updatedAt'
+          ])
+        )
+      );
+
+      allow delete: if isSignedIn() && isValidId(sessionId) && (existing().teacherId == request.auth.uid || isAdmin());
+    }
+
+    // ============================================
+    // COLLECTION 4: STUDENT DIAGNOSTIC SUBMISSIONS
+    // ============================================
+    match /submissions/{submissionId} {
+
+      function isValidSubmission(data) {
+        return data.studentName is string && data.studentName.size() <= 128 &&
+               data.sessionId is string && data.sessionId.size() <= 20 &&
+               data.teacherId is string && data.teacherId.size() <= 128 &&
+               (!('teacherNotes' in data) || (data.teacherNotes is string && data.teacherNotes.size() <= 2000)) &&
+               (!('deliveryReceiptId' in data) || (data.deliveryReceiptId is string && data.deliveryReceiptId.size() <= 64)) &&
+               (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
+               (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
+               (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
+               (!('classNumber' in data) || (data.classNumber is string && data.classNumber.size() <= 40)) &&
+               (!('reliabilityIndex' in data) || (data.reliabilityIndex is int && data.reliabilityIndex >= 0 && data.reliabilityIndex <= 100));
+      }
+
+      // Students submit without log-in if session is active, OR authenticated teacher syncs their own submission record
+      allow create: if isValidId(submissionId) && isValidSubmission(incoming()) && (
+        isAdmin() || (
+          incoming().submittedAt == request.time &&
+          get(/databases/$(database)/documents/sessions/$(incoming().sessionId)).data.isActive == true &&
+          incoming().teacherId == get(/databases/$(database)/documents/sessions/$(incoming().sessionId)).data.teacherId
+        ) || (
+          isSignedIn() &&
+          incoming().teacherId == request.auth.uid &&
+          incoming().cloudSyncedAt == request.time
+        )
+      );
+
+      // Access restriction: Query Enforcer blocks wide-open reads.
+      // Must be owner teacher or Super Admin
+      allow get: if isValidId(submissionId) && isSignedIn() && (resource.data.teacherId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.teacherId == request.auth.uid || isAdmin());
+
+      // Moderation adjustments & cloud sync updates by owner teacher
+      allow update: if isValidId(submissionId) && isSignedIn() && isValidSubmission(incoming()) && (
+        isAdmin() || (
+          existing().teacherId == request.auth.uid &&
+          incoming().teacherId == existing().teacherId &&
+          incoming().sessionId == existing().sessionId &&
+          incoming().cloudSyncedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'analysis', 'studentName', 'teacherNotes', 'overriddenClassification',
+            'deliveryReceiptId', 'deliveredAt', 'reliabilityIndex', 'institution',
+            'level', 'stream', 'classNumber', 'cloudSyncedAt', 'answers', 'teacherEmail'
+          ])
+        )
+      );
+
+      allow delete: if isValidId(submissionId) && isSignedIn() && (existing().teacherId == request.auth.uid || isAdmin());
+    }
+
+    // ============================================
+    // COLLECTION 5: QUESTIONNAIRE FORMS & TEMPLATES
+    // ============================================
+    match /forms/{formId} {
+
+      function isValidForm(data) {
+        return isValidId(data.formId) &&
+               data.title is string && data.title.size() <= 200 &&
+               data.teacherId is string && data.teacherId.size() <= 128 &&
+               data.teacherEmail is string && data.teacherEmail.size() <= 128 &&
+               data.status is string && (data.status == 'saved' || data.status == 'published' || data.status == 'ready');
+      }
+
+      // Read access: Anyone can read forms if they know formId, or if listed by signedIn user
+      // Query Enforcer: teachers can list all templates/published forms, or their own drafts
+      allow get: if isValidId(formId);
+      allow list: if isSignedIn() && (
+        resource.data.teacherEmail in [request.auth.token.email, "phillofikr@gmail.com"] || 
+        request.auth.token.email == "phillofikr@gmail.com"
+      );
+
+      allow create: if isSignedIn() && (
+        isAdmin() || (
+          incoming().teacherEmail == request.auth.token.email &&
+          isValidForm(incoming()) &&
+          incoming().createdAt is string && incoming().createdAt.size() <= 40 &&
+          incoming().updatedAt is string && incoming().updatedAt.size() <= 40
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        isAdmin() || (
+          existing().teacherEmail == request.auth.token.email &&
+          isValidForm(incoming()) &&
+          incoming().teacherEmail == existing().teacherEmail &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is string && incoming().updatedAt.size() <= 40 &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'questions', 'status', 'updatedAt',
+            'level', 'stream', 'classNumber', 'lessonTopic', 'pedagogicalGoal', 'isTemplate'
+          ])
+        )
+      );
+
+      allow delete: if isSignedIn() && (existing().teacherEmail == request.auth.token.email || isAdmin());
+    }
+
+    // ============================================
+    // COLLECTION 6: PUBLIC PLATFORM STATISTICS
+    // ============================================
+    match /stats/{statId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+  }
+}
