@@ -210,6 +210,93 @@ export function subscribeTeacherSubmissionsFirestore(
 }
 
 /**
+ * Subscribes in real time to Firestore submissions filtered by studentSessionId
+ * (scoped by teacherId for standard teachers or across sessions for verified Super Admin).
+ */
+export function subscribeSessionSubmissionsFirestore(
+  studentSessionId: string,
+  onSubmissions: (
+    items: StudentSubmission[],
+    meta: { fromCache: boolean; updatedAt: string }
+  ) => void,
+  onError?: (errorMessage: string) => void
+): () => void {
+  const user = auth.currentUser;
+  if (!user) return () => {};
+
+  const path = 'submissions';
+  const normalizedSession = (studentSessionId || 'all').trim();
+  const isAllSessions = !normalizedSession || normalizedSession.toLowerCase() === 'all';
+  const cleanSessionId = isAllSessions
+    ? ''
+    : sanitizeId(normalizedSession.toUpperCase()).slice(0, 20);
+  const isVerifiedAdmin =
+    user.emailVerified && user.email?.toLowerCase() === 'phillofikr@gmail.com';
+
+  const constraints = [];
+  if (!isVerifiedAdmin) {
+    constraints.push(where('teacherId', '==', user.uid));
+  }
+  if (cleanSessionId) {
+    constraints.push(where('sessionId', '==', cleanSessionId));
+  }
+
+  const q =
+    constraints.length > 0
+      ? query(collection(db, path), ...constraints)
+      : query(collection(db, path));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = snapshot.docs
+        .map((d) => {
+          const data = d.data() as any;
+          const sid = data.sessionId || data.session_id || '';
+          const submittedIso =
+            typeof data.submittedAt?.toDate === 'function'
+              ? data.submittedAt.toDate().toISOString()
+              : String(data.submittedAt || data.deliveredAt || new Date().toISOString());
+          return {
+            ...data,
+            id: data.id || d.id,
+            studentName: data.studentName || data.student_name || 'تلميذ',
+            student_name: data.studentName || data.student_name || 'تلميذ',
+            sessionId: sid,
+            session_id: sid,
+            teacherEmail: data.teacherEmail || data.teacher_email || '',
+            teacher_email: data.teacherEmail || data.teacher_email || '',
+            class: data.classNumber || data.class || '',
+            classNumber: data.classNumber || data.class || '',
+            submittedAt: submittedIso,
+            syncState: 'synced',
+          } as StudentSubmission;
+        })
+        .sort((a, b) =>
+          String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''))
+        );
+
+      onSubmissions(items, {
+        fromCache: snapshot.metadata.fromCache,
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (error) => {
+      if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+        try {
+          handleFirestoreError(error, OperationType.LIST, path);
+        } catch (structuredErr: any) {
+          onError?.(structuredErr?.message || 'تعذرت القراءة من Firestore بسبب الصلاحيات.');
+        }
+      } else {
+        console.warn('Firestore session report subscription warning:', error?.message || error);
+        onError?.(error?.message || 'تعذر الاتصال المباشر بـ Firestore.');
+      }
+    }
+  );
+}
+
+/**
  * Resolves a single diagnostic session directly from Firestore (public read by sessionId)
  * as a resilient fallback when a Cloud Run container cold-starts.
  */

@@ -8,12 +8,13 @@ import { getAuth } from 'firebase/auth';
 import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(
   app,
   { experimentalForceLongPolling: true },
   (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId
 ); /* CRITICAL: The app will break without this line */
+export const firestore = db;
 export const auth = getAuth(app);
 
 export enum OperationType {

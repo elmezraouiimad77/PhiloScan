@@ -1,0 +1,36 @@
+# Deploy to live Firebase Hosting channel on push/merge to main
+name: Deploy to Firebase Hosting on merge
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies & build
+        run: npm ci && npm run build
+
+      - name: Deploy to Firebase Hosting (live)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROJECT_AE3CA3A5_D34F_42A5_A4A || secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId: live
+          projectId: project-ae3ca3a5-d34f-42a5-a4a

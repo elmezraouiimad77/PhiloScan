@@ -1,0 +1,39 @@
+# Firebase App Hosting configuration for PhiloScan (Full-Stack Express + Vite)
+# Docs: https://firebase.google.com/docs/app-hosting/configure
+
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+
+scripts:
+  buildCommand: npm run build
+  runCommand: npm run start
+
+outputFiles:
+  serverApp:
+    include:
+      - dist
+      - firebase-applet-config.json
+      - data
+      - package.json
+
+env:
+  - variable: NODE_ENV
+    value: production
+    availability:
+      - BUILD
+      - RUNTIME
+  # Register runtime secrets in Firebase App Hosting before uncommenting:
+  #   firebase apphosting:secrets:set GEMINI_API_KEY
+  #   firebase apphosting:secrets:set ADMIN_SECRET_KEY
+  # - variable: GEMINI_API_KEY
+  #   secret: GEMINI_API_KEY
+  #   availability:
+  #     - RUNTIME
+  # - variable: ADMIN_SECRET_KEY
+  #   secret: ADMIN_SECRET_KEY
+  #   availability:
+  #     - RUNTIME

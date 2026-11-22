@@ -277,9 +277,11 @@ export default function App() {
           onClick={() => navigateTo('home')} 
           className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none group transition-transform duration-300 hover:scale-[1.02] active:scale-[0.98] min-w-0"
         >
-          <div className="w-12 h-12 sm:w-[70px] sm:h-[70px] shrink-0 bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-md group-hover:border-blue-300 transition duration-300">
-            <PhiloScanLogo size={34} className="sm:hidden" pathStyle={{ fontSize: '18px', lineHeight: '26px' }} />
-            <PhiloScanLogo size={45} className="hidden sm:block" pathStyle={{ fontSize: '20px', lineHeight: '30px' }} />
+          <div className="w-12 h-12 sm:w-[70px] sm:h-[70px] shrink-0 bg-white border border-slate-200 rounded-xl sm:rounded-2xl flex items-center justify-center p-1.5 sm:p-2 shadow-sm group-hover:border-blue-400 transition duration-200">
+            <PhiloScanLogo
+              theme="light"
+              className="w-9 h-9 sm:w-[54px] sm:h-[54px]"
+            />
           </div>
           <div className="text-right select-none min-w-0">
             <h1 className="text-lg sm:text-2xl font-extrabold text-slate-900 tracking-tighter drop-shadow-xs flex items-center gap-1.5 justify-end flex-wrap">

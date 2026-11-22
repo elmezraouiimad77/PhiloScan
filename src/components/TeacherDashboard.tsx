@@ -13,6 +13,7 @@ import SearchableSelect from './SearchableSelect';
 import UserTutorial from './UserTutorial';
 import StudentStatistics from './StudentStatistics';
 import ClassComparisonPanel from './ClassComparisonPanel';
+import AnalyticalReport from './AnalyticalReport';
 import DataSyncHub from './DataSyncHub';
 import PrintReportPortal from './PrintReportPortal';
 import {
@@ -829,6 +830,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   // Tab states for teacher workspace
   const [teacherActiveTab, setTeacherActiveTab] = useState<'monitoring' | 'sessions' | 'formBank' | 'analytics' | 'sync'>('monitoring');
   const [monitoringSubTab, setMonitoringSubTab] = useState<'analytics' | 'proctoring'>('analytics');
+  const [reportDrawerSessionId, setReportDrawerSessionId] = useState<string | null>(null);
+  const [analyticsSessionSearch, setAnalyticsSessionSearch] = useState<string>('');
   const [useSimulationData, setUseSimulationData] = useState<boolean>(false);
   const [activePerceptionChartTab, setActivePerceptionChartTab] = useState<'source' | 'feeling' | 'goal' | 'debate' | 'rating'>('source');
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
@@ -1095,6 +1098,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     setProctoringHistory([]);
     setDismissedTrustAlerts([]);
   }, [selectedSessionId]);
+
+  const openSessionReportDrawer = (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    setReportDrawerSessionId(sessionId);
+  };
   // --- END REAL-TIME PROCTORING MONITORING ENGINE ---
 
   const [analyticsGroupMode, setAnalyticsGroupMode] = useState<'daily' | 'sequential'>('daily');
@@ -1256,6 +1264,18 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   };
 
   const [selectedStudent, setSelectedStudent] = useState<StudentSubmission | null>(null);
+
+  // Close AnalyticalReport Side Drawer on Escape key (when student modal is not open above it)
+  useEffect(() => {
+    if (!reportDrawerSessionId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !selectedStudent) {
+        setReportDrawerSessionId(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [reportDrawerSessionId, selectedStudent]);
   const [analyzingWithGemini, setAnalyzingWithGemini] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStyle, setFilterStyle] = useState<string>('الكل');
@@ -7532,6 +7552,124 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     </div>
                   </div>
 
+                  {/* Interactive Sessions Directory for Launching Side Drawer AnalyticalReport */}
+                  {(() => {
+                    const q = analyticsSessionSearch.trim().toLowerCase();
+                    const filteredAnalyticsSessions = sessions.filter((s) => {
+                      if (!q) return true;
+                      return (
+                        String(s.title || '').toLowerCase().includes(q) ||
+                        String(s.sessionId || '').toLowerCase().includes(q) ||
+                        String(s.level || '').toLowerCase().includes(q) ||
+                        String(s.stream || '').toLowerCase().includes(q)
+                      );
+                    });
+
+                    return (
+                      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                          <div className="space-y-1">
+                            <h4 className="text-sm sm:text-base font-black text-slate-900">
+                              قائمة الجلسات والتقارير التحليلية (Firestore)
+                            </h4>
+                            <p className="text-xs text-slate-500 font-medium">
+                              اضغط على أي جلسة لفتح تقريرها التحليلي المباشر في نافذة جانبية ·{' '}
+                              <span className="font-mono tabular-nums text-slate-700 font-bold">
+                                {filteredAnalyticsSessions.length} جلسة
+                              </span>
+                            </p>
+                          </div>
+
+                          <div className="relative w-full sm:w-64 shrink-0">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={analyticsSessionSearch}
+                              onChange={(e) => setAnalyticsSessionSearch(e.target.value)}
+                              placeholder="تصفية الجلسات بالاسم أو الرمز..."
+                              className="w-full min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            />
+                          </div>
+                        </div>
+
+                        {sessions.length === 0 ? (
+                          <div className="border border-dashed border-slate-200 rounded-xl py-8 px-4 text-center space-y-3 bg-slate-50/50">
+                            <p className="text-xs font-bold text-slate-600">
+                              لا توجد جلسات تشخيصية منشأة بعد لعرض تقاريرها.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTeacherActiveTab('sessions');
+                                setShowCreateSession(true);
+                              }}
+                              className="min-h-[40px] px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                            >
+                              إنشاء جلسة تشخيصية جديدة
+                            </button>
+                          </div>
+                        ) : filteredAnalyticsSessions.length === 0 ? (
+                          <div className="py-6 text-center text-xs text-slate-500">
+                            لا توجد جلسة مطابقة لعبارة البحث الحالية.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {filteredAnalyticsSessions.map((sess) => {
+                              const sessSubmissionsCount = submissions.filter(
+                                (sub) =>
+                                  String(sub.sessionId || sub.session_id || '').toUpperCase() ===
+                                  String(sess.sessionId || '').toUpperCase()
+                              ).length;
+                              const isDrawerOpen = reportDrawerSessionId === sess.sessionId;
+
+                              return (
+                                <button
+                                  key={sess.sessionId}
+                                  type="button"
+                                  onClick={() => openSessionReportDrawer(sess.sessionId)}
+                                  className={`group text-right bg-white border rounded-2xl p-4 flex flex-col justify-between gap-3 transition-colors cursor-pointer ${
+                                    isDrawerOpen
+                                      ? 'border-indigo-600 bg-indigo-50/30'
+                                      : 'border-slate-200 hover:border-slate-400 hover:bg-slate-50/60'
+                                  }`}
+                                >
+                                  <div className="space-y-2 w-full">
+                                    <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 font-semibold">
+                                      <span className="font-mono tabular-nums font-black text-slate-800">
+                                        {sess.sessionId}
+                                      </span>
+                                      <span className={sess.isFrozen ? 'text-amber-700' : 'text-emerald-700'}>
+                                        {sess.isFrozen ? 'موقوفة' : 'نشطة'}
+                                      </span>
+                                    </div>
+
+                                    <h5 className="text-sm font-black text-slate-900 leading-snug line-clamp-2">
+                                      {sess.title}
+                                    </h5>
+
+                                    <p className="text-xs text-slate-500 truncate">
+                                      {sess.level} · {sess.stream} · فوج {sess.classNumber}
+                                    </p>
+                                  </div>
+
+                                  <div className="w-full pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                                    <span className="font-mono tabular-nums text-slate-600 font-bold">
+                                      {sessSubmissionsCount} استجابة
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 font-bold text-indigo-700 group-hover:text-indigo-800 whitespace-nowrap shrink-0">
+                                      <span>فتح التقرير التحليلي</span>
+                                      <ChevronLeft className="w-3.5 h-3.5" />
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })()}
+
                   {totalCount === 0 ? (
                     <div className="text-center py-12 sm:py-16 px-4 bg-white rounded-[28px] sm:rounded-[32px] border border-dashed border-slate-200 shadow-sm">
                       <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -8248,7 +8386,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <ClassComparisonPanel
                     sessions={sessions}
                     submissions={useSimulationData ? mockSimulationSubmissions : submissions}
-                    onSelectSession={(sid) => setSelectedSessionId(sid)}
+                    onSelectSession={(sid) => openSessionReportDrawer(sid)}
                     onPrintCohortReport={() => triggerPrintReport('cohort')}
                   />
 
@@ -8738,6 +8876,15 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 عرض الإحصائيات والتلاميذ
                               </button>
 
+                              <button
+                                type="button"
+                                onClick={() => openSessionReportDrawer(sess.sessionId)}
+                                className="w-full min-h-[42px] py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                                التقرير التحليلي (Firestore)
+                              </button>
+
                               <div className="grid grid-cols-2 gap-2">
                                 <button
                                   type="button"
@@ -8840,6 +8987,76 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               />
             )}
             
+            {/* ANALYTICAL REPORT SIDE DRAWER */}
+            <AnimatePresence>
+              {reportDrawerSessionId !== null && (
+                <div
+                  className="fixed inset-0 bg-slate-900/55 backdrop-blur-xs flex justify-end z-40"
+                  dir="rtl"
+                  onClick={() => setReportDrawerSessionId(null)}
+                >
+                  <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="التقرير التحليلي للجلسة"
+                    initial={{ opacity: 0, x: -32 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -32 }}
+                    transition={{ duration: 0.18 }}
+                    className="bg-slate-50 max-w-5xl w-full h-full shadow-2xl overflow-y-auto border-r border-slate-200 flex flex-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-bold text-slate-500 block">
+                          معاينة التقرير التحليلي للجلسة
+                        </span>
+                        <h3 className="text-sm sm:text-base font-black text-slate-900 truncate">
+                          {sessions.find((s) => s.sessionId === reportDrawerSessionId)?.title ||
+                            (reportDrawerSessionId === 'all'
+                              ? 'جميع الجلسات'
+                              : reportDrawerSessionId)}
+                        </h3>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setReportDrawerSessionId(null)}
+                        className="min-h-[40px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                        <span>إغلاق التقرير</span>
+                      </button>
+                    </div>
+
+                    <div className="p-4 sm:p-6">
+                      <AnalyticalReport
+                        sessionId={reportDrawerSessionId}
+                        sessions={sessions}
+                        fallbackSubmissions={
+                          useSimulationData ? mockSimulationSubmissions : submissions
+                        }
+                        useSimulationData={useSimulationData}
+                        onSessionChange={(sid) => {
+                          setSelectedSessionId(sid);
+                          setReportDrawerSessionId(sid);
+                        }}
+                        onSelectStudent={(student) => openStudentDetails(student)}
+                        onPrintReport={() => {
+                          setSelectedSessionId(reportDrawerSessionId);
+                          triggerPrintReport('cohort');
+                        }}
+                        onNavigateToSessions={() => {
+                          setReportDrawerSessionId(null);
+                          setTeacherActiveTab('sessions');
+                        }}
+                      />
+                    </div>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>
+
             {/* DETAILED STUDENT MODAL / OVERLAY FOR LIMITED EDIT (تعديل محدود) */}
             {selectedStudent && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex justify-end z-45 transition-opacity">

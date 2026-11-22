@@ -33,7 +33,7 @@ service cloud.firestore {
     // Bootstrapped by static email comparison or dynamic administrative record
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == 'phillofikr@gmail.com' || 
+        (request.auth.token.email_verified == true && request.auth.token.email == 'phillofikr@gmail.com') ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -51,7 +51,10 @@ service cloud.firestore {
       function isValidTeacher(data) {
         return data.email is string && data.email.size() <= 200 &&
                data.fullName is string && data.fullName.size() <= 256 &&
-               data.role is string && (data.role == 'teacher' || data.role == 'admin');
+               data.role is string && (data.role == 'teacher' || data.role == 'admin') &&
+               (!('school' in data) || (data.school is string && data.school.size() <= 256)) &&
+               (!('regionalAcademy' in data) || (data.regionalAcademy is string && data.regionalAcademy.size() <= 256)) &&
+               (!('province' in data) || (data.province is string && data.province.size() <= 128));
       }
 
       // Read access: Restricted to the teacher themselves, or elevated Super Admin
@@ -143,8 +146,11 @@ service cloud.firestore {
         return data.studentName is string && data.studentName.size() <= 128 &&
                data.sessionId is string && data.sessionId.size() <= 20 &&
                data.teacherId is string && data.teacherId.size() <= 128 &&
+               (!('teacherEmail' in data) || (data.teacherEmail is string && data.teacherEmail.size() <= 200)) &&
                (!('teacherNotes' in data) || (data.teacherNotes is string && data.teacherNotes.size() <= 2000)) &&
+               (!('overriddenClassification' in data) || data.overriddenClassification == null || (data.overriddenClassification is string && data.overriddenClassification.size() <= 100)) &&
                (!('deliveryReceiptId' in data) || (data.deliveryReceiptId is string && data.deliveryReceiptId.size() <= 64)) &&
+               (!('deliveredAt' in data) || (data.deliveredAt is string && data.deliveredAt.size() <= 40)) &&
                (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
                (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
                (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
@@ -205,12 +211,15 @@ service cloud.firestore {
       // Query Enforcer: teachers can list all templates/published forms, or their own drafts
       allow get: if isValidId(formId);
       allow list: if isSignedIn() && (
-        resource.data.teacherEmail in [request.auth.token.email, "phillofikr@gmail.com"] || 
-        request.auth.token.email == "phillofikr@gmail.com"
+        isAdmin() || (
+          request.auth.token.email_verified == true &&
+          resource.data.teacherEmail in [request.auth.token.email, "phillofikr@gmail.com"]
+        )
       );
 
-      allow create: if isSignedIn() && (
+      allow create: if isSignedIn() && isValidId(formId) && (
         isAdmin() || (
+          request.auth.token.email_verified == true &&
           incoming().teacherEmail == request.auth.token.email &&
           isValidForm(incoming()) &&
           incoming().createdAt is string && incoming().createdAt.size() <= 40 &&
@@ -218,8 +227,9 @@ service cloud.firestore {
         )
       );
 
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && isValidId(formId) && (
         isAdmin() || (
+          request.auth.token.email_verified == true &&
           existing().teacherEmail == request.auth.token.email &&
           isValidForm(incoming()) &&
           incoming().teacherEmail == existing().teacherEmail &&
@@ -232,15 +242,32 @@ service cloud.firestore {
         )
       );
 
-      allow delete: if isSignedIn() && (existing().teacherEmail == request.auth.token.email || isAdmin());
+      allow delete: if isSignedIn() && isValidId(formId) && (
+        isAdmin() || (
+          request.auth.token.email_verified == true &&
+          existing().teacherEmail == request.auth.token.email
+        )
+      );
     }
 
     // ============================================
     // COLLECTION 6: PUBLIC PLATFORM STATISTICS
     // ============================================
     match /stats/{statId} {
-      allow read: if true;
-      allow write: if isSignedIn();
+      function isValidStats(data) {
+        return data.keys().hasAll(['teachersCount', 'schoolsCount', 'sessionsCount', 'submissionsCount', 'studentsCount', 'updatedAt']) &&
+               data.keys().hasOnly(['teachersCount', 'schoolsCount', 'sessionsCount', 'submissionsCount', 'studentsCount', 'updatedAt']) &&
+               data.teachersCount is int && data.teachersCount >= 0 &&
+               data.schoolsCount is int && data.schoolsCount >= 0 &&
+               data.sessionsCount is int && data.sessionsCount >= 0 &&
+               data.submissionsCount is int && data.submissionsCount >= 0 &&
+               data.studentsCount is int && data.studentsCount >= 0 &&
+               data.updatedAt is string && data.updatedAt.size() <= 40;
+      }
+
+      allow read: if isValidId(statId);
+      allow create, update: if isSignedIn() && isValidId(statId) && isValidStats(incoming());
+      allow delete: if isAdmin();
     }
 
   }
