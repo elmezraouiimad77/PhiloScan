@@ -29,12 +29,12 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
 
   const steps = [
     {
-      title: 'مرحباً بك في منصة PhiloScan! 👋',
+      title: 'مرحباً بك في منصة PhiloScan',
       description: 'دليلك السريع للبدء في تشخيص وفحص المكتسبات الفلسفية لطلابك بطريقة تفاعلية ومؤتمتة بالكامل.',
       badge: 'مقدمة المنصة',
       icon: (
-        <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-600 mb-4 shadow-inner" id="tutorial-icon-welcome">
-          <Sparkles className="w-8 h-8 animate-pulse" />
+        <div className="w-16 h-16 bg-sky-50 border border-sky-200 rounded-2xl flex items-center justify-center text-[#0284C7] mb-4" id="tutorial-icon-welcome">
+          <Sparkles className="w-8 h-8" />
         </div>
       ),
       content: (
@@ -52,7 +52,7 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
       )
     },
     {
-      title: 'الخطوة 1: اختيار النموذج من بنك الاستمارات 📋',
+      title: 'الخطوة 1: اختيار النموذج من بنك الاستمارات',
       description: 'استخدم النماذج المعتمدة الجاهزة أو قم بتعديلها لتناسب خطتك التعليمية.',
       badge: 'بنك الاستمارات',
       icon: (
@@ -83,7 +83,7 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
       )
     },
     {
-      title: 'الخطوة 2: إنشاء الجلسة ومشاركة الرابط 🔗',
+      title: 'الخطوة 2: إنشاء الجلسة ومشاركة الرابط',
       description: 'قم بإنشاء جلسة تقييم تفاعلية مخصصة لكل قسم دراسي لتتبع نتائجهم بشكل منفصل.',
       badge: 'إنشاء الجلسات',
       icon: (
@@ -106,11 +106,11 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
       )
     },
     {
-      title: 'الخطوة 3: التتبع والتحليل الذكي المدعوم بالذكاء الاصطناعي 📊',
+      title: 'الخطوة 3: التتبع والتحليل الذكي المدعوم بالذكاء الاصطناعي',
       description: 'راقب الموثوقية بذكاء، واقرأ تقارير المهارات الفلسفية لطلابك لحظياً.',
       badge: 'المراقبة والتحليل',
       icon: (
-        <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center text-purple-600 mb-4 shadow-inner" id="tutorial-icon-analytics">
+        <div className="w-16 h-16 bg-purple-50 border border-purple-200 rounded-2xl flex items-center justify-center text-purple-600 mb-4" id="tutorial-icon-analytics">
           <Activity className="w-8 h-8" />
         </div>
       ),
@@ -121,7 +121,7 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
           </p>
           <ul className="space-y-2 text-xs sm:text-sm">
             <li className="flex items-start gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-500 mt-1 flex-shrink-0 animate-ping"></span>
+              <span className="w-2 h-2 rounded-full bg-purple-600 mt-1.5 flex-shrink-0"></span>
               <span><strong className="text-purple-700">تتبع حي ومكافحة الانتحال:</strong> احصل على إنذارات فورية إذا حاول الطلاب مغادرة الشاشة أو محاولة نسخ ولصق الأجوبة الجاهزة.</span>
             </li>
             <li className="flex items-start gap-2">
@@ -246,7 +246,7 @@ export default function UserTutorial({ isOpen, onClose }: UserTutorialProps) {
               >
                 {currentStep === steps.length - 1 ? (
                   <>
-                    <span>البدء بالعمل! ✅</span>
+                    <span>البدء بالعمل</span>
                     <Play className="w-4 h-4 fill-white text-white" />
                   </>
                 ) : (

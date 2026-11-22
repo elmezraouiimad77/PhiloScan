@@ -29,7 +29,16 @@ import {
   CheckCircle,
   MapPin,
   Copy,
-  AlertCircle
+  AlertCircle,
+  Home,
+  Info,
+  ClipboardList,
+  GraduationCap,
+  Building2,
+  Database,
+  AlertTriangle,
+  Link2,
+  Camera
 } from 'lucide-react';
 import StudentForm from './components/StudentForm';
 import TeacherDashboard from './components/TeacherDashboard';
@@ -48,8 +57,9 @@ export default function App() {
     }
     const hash = window.location.hash;
     if (hash === '#/about') return 'about';
-    if (hash === '#/teacher') return 'teacher';
+    if (hash === '#/teacher' || hash.startsWith('#/teacher?')) return 'teacher';
     if (hash === '#/form') return 'form';
+    if (hash === '#/admin') return 'admin';
     if (hash.startsWith('#/session/')) return 'form';
     return 'home';
   });
@@ -189,7 +199,7 @@ export default function App() {
         setView('form');
       } else if (hash === '#/about') {
         setView('about');
-      } else if (hash === '#/teacher') {
+      } else if (hash === '#/teacher' || hash.startsWith('#/teacher?')) {
         setView('teacher');
       } else if (hash === '#/form') {
         setView('form');
@@ -377,23 +387,26 @@ export default function App() {
         <div className="bg-white/95 backdrop-blur-md rounded-2xl p-3.5 border border-slate-200 shadow-xl space-y-2 text-right">
           <button
             onClick={() => navigateTo('home')}
-            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center leading-normal ${view === 'home' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center gap-2.5 leading-normal ${view === 'home' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            🏠 الرئيسية
+            <Home className="w-4 h-4 text-sky-600 shrink-0" />
+            <span>الرئيسية</span>
           </button>
 
           <button
             onClick={() => navigateTo('about')}
-            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center leading-normal ${view === 'about' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center gap-2.5 leading-normal ${view === 'about' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            ℹ️ حول المنصة
+            <Info className="w-4 h-4 text-sky-600 shrink-0" />
+            <span>حول المنصة</span>
           </button>
           
           <button
             onClick={() => navigateTo('form')}
-            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center leading-normal ${view === 'form' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={`w-full min-h-[46px] text-right py-2.5 px-4 rounded-xl text-sm font-bold transition-all duration-200 flex items-center gap-2.5 leading-normal ${view === 'form' ? 'bg-slate-100 text-slate-900 font-extrabold shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
           >
-            📝 الاستمارة (التلميذ)
+            <ClipboardList className="w-4 h-4 text-sky-600 shrink-0" />
+            <span>الاستمارة (التلميذ)</span>
           </button>
           
           <div className="border-t border-slate-100 my-1"></div>
@@ -484,33 +497,37 @@ export default function App() {
                 <li>
                   <button 
                     onClick={() => { navigateTo('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                    className="hover:text-blue-400 transition cursor-pointer flex items-center gap-1.5"
+                    className="hover:text-sky-400 transition cursor-pointer flex items-center gap-2"
                   >
-                    🏠 الرئيسية
+                    <Home className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>الرئيسية</span>
                   </button>
                 </li>
                 <li>
                   <button 
                     onClick={() => { navigateTo('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                    className="hover:text-blue-400 transition cursor-pointer flex items-center gap-1.5"
+                    className="hover:text-sky-400 transition cursor-pointer flex items-center gap-2"
                   >
-                    ℹ️ حول المنصة ومنهجية التشخيص
+                    <Info className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>حول المنصة ومنهجية التشخيص</span>
                   </button>
                 </li>
                 <li>
                   <button 
                     onClick={() => { navigateTo('form'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                    className="hover:text-blue-400 transition cursor-pointer flex items-center gap-1.5"
+                    className="hover:text-sky-400 transition cursor-pointer flex items-center gap-2"
                   >
-                    📝 الاستمارة (بوابة التلميذ)
+                    <ClipboardList className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>الاستمارة (بوابة التلميذ)</span>
                   </button>
                 </li>
                 <li>
                   <button 
                     onClick={() => { navigateTo('teacher'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                    className="hover:text-amber-400 transition cursor-pointer flex items-center gap-1.5 text-amber-500 font-bold"
+                    className="hover:text-sky-300 transition cursor-pointer flex items-center gap-2 text-sky-400 font-bold"
                   >
-                    🔑 فضاء الأستاذ الموجه
+                    <GraduationCap className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>فضاء الأستاذ الموجه</span>
                   </button>
                 </li>
               </ul>
@@ -548,9 +565,9 @@ export default function App() {
                       setReportSuccess(false);
                       setIsReportOpen(true);
                     }}
-                    className="hover:text-amber-400 text-amber-400 font-extrabold transition cursor-pointer flex items-center gap-2 bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl block w-full text-right"
+                    className="hover:text-amber-300 text-amber-400 font-extrabold transition cursor-pointer flex items-center gap-2 bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl block w-full text-right"
                   >
-                    <AlertCircle className="w-4 h-4 text-amber-500 animate-pulse shrink-0" />
+                    <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
                     <span className="truncate flex-1 text-right">الإبلاغ عن مشكلة أو اقتراح تحسين</span>
                   </button>
                 </li>
@@ -613,20 +630,20 @@ export default function App() {
 
           </div>
 
-          {/* 3. Bottom Credits panel with standard oriental numerals */}
-          <div className="border-t border-slate-900 mt-10 pt-6 px-4 py-4 rounded-2xl flex flex-col md:flex-row justify-between items-center text-xs text-slate-400 gap-4 bg-[#323f37]">
-            <p className="order-2 md:order-1 text-center md:text-right text-[#e6eaf0] border-[#e6ecf5]">
+          {/* 3. Bottom Credits panel */}
+          <div className="border border-slate-800 mt-10 px-5 py-4 rounded-2xl flex flex-col md:flex-row justify-between items-center text-xs text-slate-300 gap-4 bg-[#0B2545]">
+            <p className="order-2 md:order-1 text-center md:text-right text-slate-200 tabular-nums">
               © 2026 PhiloScan. جميع الحقوق محفوظة للاستعمال العلمي والتربوي.
             </p>
             <div className="order-1 md:order-2 flex flex-wrap justify-center items-center gap-x-4 gap-y-2 text-center md:text-left">
               <div className="flex items-center gap-1.5">
-                <span className="text-[#fbe000] font-medium">تصميم وتطوير:</span>
-                <span className="font-extrabold text-slate-200">م. ذ. عماد المزراوي</span>
+                <span className="text-sky-400 font-semibold">تصميم وتطوير:</span>
+                <span className="font-extrabold text-white">م. ذ. عماد المزراوي</span>
               </div>
-              <span className="hidden md:inline text-slate-800">|</span>
-              <div className="flex items-center gap-1">
-                <span className="text-[#f5cc16]">الإصدار:</span>
-                <span className="font-mono bg-blue-500/10 text-blue-400 px-2.5 py-0.5 rounded-md font-extrabold">V1.0</span>
+              <span className="hidden md:inline text-slate-700">|</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400">الإصدار:</span>
+                <span className="font-mono tabular-nums bg-sky-500/15 text-sky-300 px-2.5 py-0.5 rounded-md font-extrabold border border-sky-500/25">V1.0</span>
               </div>
             </div>
           </div>
@@ -659,21 +676,30 @@ export default function App() {
               <p className="font-bold text-slate-800">تلتزم منصة فيلوسكان (PhiloScan) بحماية وسرية كافة بيانات التلاميذ والأساتذة على حد سواء:</p>
               
               <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100 space-y-2">
-                <h4 className="font-extrabold text-blue-900 text-xs text-right">🔒 تشفير وحفظ هوية التلاميذ (Anonymization)</h4>
+                <h4 className="font-extrabold text-blue-900 text-xs text-right flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+                  <span>تشفير وحفظ هوية التلاميذ (Anonymization)</span>
+                </h4>
                 <p className="text-xs text-slate-700">
                   لا نطلب من التلميذ أي معلومات تعريفية شخصية حساسة خارج إطار اسمه لتمكين الأستاذ من معرفة صاحبه. تُحفظ الإجابات بهدف التحليل التربوي المعرفي المحض.
                 </p>
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs">🏫 حظر الاستخدام التجاري أو الخارجي</h4>
+                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-slate-600 shrink-0" />
+                  <span>حظر الاستخدام التجاري أو الخارجي</span>
+                </h4>
                 <p className="text-xs text-slate-500">
                   كافة التقارير المصممة والتشخيصات المُنجحة من قبل الذكاء الاصطناعي موجهة حصرياً للأستاذ الموجه المشرف على الفصل الدراسي لمساعدته في بناء أساليب تدريس مخصصة ونقدية، ويُمنع استخدامها تجارياً بالكامل.
                 </p>
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs">💾 التخزين السحابي المحمي</h4>
+                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-slate-600 shrink-0" />
+                  <span>التخزين السحابي المحمي</span>
+                </h4>
                 <p className="text-xs text-slate-500">
                   تُقاد قاعدة بيانات المنصة بهيكلية أمان متطورة تابعة لنظام (Firebase) الموثق بأذونات وصول دقيقة تمنع قراءة بيانات فصول أستاذ معين من قبل أي مدرس أو زائر خارجي آخر.
                 </p>
@@ -717,21 +743,30 @@ export default function App() {
               <p className="font-bold text-slate-800">باستعمالك لمنصة فيلوسكان، فإنك توافق على البنود والشروط التربوية والتقنية التالية:</p>
 
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs">🎓 الغرض الأكاديمي والتربوي</h4>
+                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <GraduationCap className="w-4 h-4 text-sky-600 shrink-0" />
+                  <span>الغرض الأكاديمي والتربوي</span>
+                </h4>
                 <p className="text-xs text-slate-500">
                   تم تطوير هذه المنصة غرضاً لتسهيل عمل أساتذة الفلسفة بمؤسسات التعليم الثانوي التأهيلي المغربي لتشخيص التمثلات الفكرية والنزعة النقدية للطلبة قبل انطلاق المجزوءات الفلسفية.
                 </p>
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs text-amber-600">⚠️ مسؤولية الأساتذة المشرفين</h4>
+                <h4 className="font-bold text-amber-700 text-xs flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>مسؤولية الأساتذة المشرفين</span>
+                </h4>
                 <p className="text-xs text-slate-500">
                   يكون كل أستاذ مسؤولاً مسؤولية تامة عن إدارة الجلسة التشخيصية الخاصة به، ومشاركة رمز الجلسة التعريفي حصراً مع تلامذته بالقسم الدراسي الموجه.
                 </p>
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs">🔗 الملكية الفكرية والبحث المنهجي</h4>
+                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Link2 className="w-4 h-4 text-slate-600 shrink-0" />
+                  <span>الملكية الفكرية والبحث المنهجي</span>
+                </h4>
                 <p className="text-xs text-slate-500">
                   تعود الملكية الفكرية والهندسة المنهجية للمنصة ومقاييسها المعرفية الخمسة للمطور والموجه التربوي ذ. عماد المزراوي، وأي اقتباس علمي يجب أن يشير للمصدر بشكل لائق.
                 </p>
@@ -865,7 +900,7 @@ export default function App() {
             {/* Header */}
             <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2 text-slate-800">
-                <AlertCircle className="w-5 h-5 text-amber-500 animate-pulse shrink-0" />
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
                 <h3 className="font-black text-sm sm:text-base">مركز الدعم وبلاغات جودة المنصة</h3>
               </div>
               <button 
@@ -899,8 +934,9 @@ export default function App() {
                   </p>
 
                   {reportError && (
-                    <div className="p-3.5 bg-rose-50 text-rose-700 rounded-2xl border border-rose-100/80 text-xs font-bold leading-normal text-right">
-                      ⚠️ {reportError}
+                    <div className="p-3.5 bg-rose-50 text-rose-700 rounded-2xl border border-rose-100/80 text-xs font-bold leading-normal text-right flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>{reportError}</span>
                     </div>
                   )}
 
@@ -936,12 +972,12 @@ export default function App() {
                       onChange={(e) => setReportForm({ ...reportForm, reportType: e.target.value })}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-4 min-h-[44px] text-slate-800 text-base sm:text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition cursor-pointer"
                     >
-                      <option value="tech_error">🔴 خطأ برمجى / تقنى بالمنصة</option>
-                      <option value="form_error">📝 مشكلة متعلقة ببنود وصياغة الاستمارة</option>
-                      <option value="analytics_error">📊 خطأ تحليلات / إحصائيات الجلسة وعمل الذكاء الاصطناعي</option>
-                      <option value="dev_suggestion">💡 اقتراح تحسين واجهات وتجربة الاستخدام</option>
-                      <option value="new_feature">✨ طلب ميزة وأداة تربوية جديدة مضافة</option>
-                      <option value="general_comment">💬 ملاحظة عامة أو تقييم للمشروع</option>
+                      <option value="tech_error">خطأ برمجى / تقنى بالمنصة</option>
+                      <option value="form_error">مشكلة متعلقة ببنود وصياغة الاستمارة</option>
+                      <option value="analytics_error">خطأ تحليلات / إحصائيات الجلسة وعمل الذكاء الاصطناعي</option>
+                      <option value="dev_suggestion">اقتراح تحسين واجهات وتجربة الاستخدام</option>
+                      <option value="new_feature">طلب ميزة وأداة تربوية جديدة مضافة</option>
+                      <option value="general_comment">ملاحظة عامة أو تقييم للمشروع</option>
                     </select>
                   </div>
 
@@ -982,8 +1018,8 @@ export default function App() {
                           className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
                         />
                         <div className="flex flex-col items-center space-y-1.5">
-                          <div className="w-10 h-10 bg-slate-100 text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 rounded-2xl flex items-center justify-center transition">
-                            📷
+                          <div className="w-10 h-10 bg-slate-100 text-slate-500 group-hover:bg-blue-50 group-hover:text-sky-600 rounded-2xl flex items-center justify-center transition">
+                            <Camera className="w-5 h-5" />
                           </div>
                           <p className="text-xs text-slate-600 font-bold">اسحب صورة أو لقطة شاشة هنا، أو اضغط للتصفح</p>
                           <p className="text-[10px] text-slate-400">تدعم ملفات الصور JPEG, PNG وغيرها حتى 2MB</p>

@@ -108,6 +108,50 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["teachersCount", "schoolsCount", "sessionsCount", "submissionsCount", "studentsCount"]
+    },
+    "NotificationSettings": {
+      "title": "Teacher Notification Settings",
+      "description": "Opt-in pedagogical notification channel and consent preferences isolated per teacher",
+      "type": "object",
+      "properties": {
+        "teacherId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$", "description": "Owner Firebase Auth UID" },
+        "teacherEmail": { "type": "string", "maxLength": 200, "description": "Owner teacher email" },
+        "consentAccepted": { "type": "boolean", "description": "Explicit opt-in flag" },
+        "consentTimestamp": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "disableAllExternal": { "type": "boolean", "description": "Master switch disabling Email and WhatsApp" },
+        "channels": { "type": "object", "description": "Channel enablement flags (inApp, email, whatsapp)" },
+        "emailConfig": { "type": "object", "description": "Linked notification email address and verification metadata" },
+        "whatsappConfig": { "type": "object", "description": "Linked WhatsApp country code, E.164 number, and explicit consent" },
+        "messageTypes": { "type": "object", "description": "Allowed pedagogical notification categories" },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 40 }
+      },
+      "required": ["teacherId", "teacherEmail", "consentAccepted", "disableAllExternal", "channels", "emailConfig", "whatsappConfig", "messageTypes", "updatedAt"]
+    },
+    "PedagogicalNotification": {
+      "title": "Pedagogical Notification",
+      "description": "Smart pedagogical alert generated from diagnostic cohort/individual indicators",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teacherId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teacherEmail": { "type": "string", "maxLength": 200 },
+        "title": { "type": "string", "maxLength": 240 },
+        "indicatorType": { "type": "string", "enum": ["critical_thinking_difficulty", "argumentation_weakness", "cognitive_fear_elevation", "low_curiosity_readiness", "class_level_disparity", "individual_follow_up"] },
+        "indicatorLabel": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "enum": ["class_alert", "student_alert", "ai_recommendation"] },
+        "sessionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sessionTitle": { "type": "string", "maxLength": 200 },
+        "classNameLabel": { "type": "string", "maxLength": 120 },
+        "gradeLevel": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "maxLength": 800 },
+        "priority": { "type": "string", "enum": ["عادي", "مهم", "مرتفع"] },
+        "recommendation": { "type": "string", "maxLength": 600 },
+        "reportPath": { "type": "string", "maxLength": 260 },
+        "isRead": { "type": "boolean" },
+        "readAt": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 40 }
+      },
+      "required": ["id", "teacherId", "teacherEmail", "title", "indicatorType", "indicatorLabel", "category", "sessionId", "sessionTitle", "classNameLabel", "gradeLevel", "summary", "priority", "recommendation", "reportPath", "isRead", "createdAt"]
     }
   },
   "firestore": {
@@ -134,6 +178,14 @@
     "/stats/{statId}": {
       "schema": "Stats",
       "description": "Cache of live SaaS activity statistics counters"
+    },
+    "/users/{teacherId}/notificationSettings/{settingId}": {
+      "schema": "NotificationSettings",
+      "description": "Opt-in pedagogical notification channel preferences isolated to owner teacher"
+    },
+    "/users/{teacherId}/notifications/{notificationId}": {
+      "schema": "PedagogicalNotification",
+      "description": "Pedagogical notifications center stream isolated to owner teacher"
     }
   }
 }

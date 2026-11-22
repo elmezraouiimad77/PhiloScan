@@ -16,6 +16,8 @@ import ClassComparisonPanel from './ClassComparisonPanel';
 import AnalyticalReport from './AnalyticalReport';
 import DataSyncHub from './DataSyncHub';
 import PrintReportPortal from './PrintReportPortal';
+import TeacherNotificationsCenter from './TeacherNotificationsCenter';
+import type { PedagogicalNotification } from '../types';
 import {
   saveLocalSubmissions,
   saveLocalSubmission,
@@ -93,7 +95,22 @@ import {
   Wifi,
   AlertTriangle,
   CheckCircle2,
-  Layers
+  Layers,
+  Clock,
+  Compass,
+  Award,
+  Scale,
+  Lightbulb,
+  Star,
+  ClipboardList,
+  Inbox,
+  Library,
+  SlidersHorizontal,
+  Wrench,
+  Ban,
+  Flame,
+  Snowflake,
+  Package
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -828,9 +845,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   });
   
   // Tab states for teacher workspace
-  const [teacherActiveTab, setTeacherActiveTab] = useState<'monitoring' | 'sessions' | 'formBank' | 'analytics' | 'sync'>('monitoring');
+  const [teacherActiveTab, setTeacherActiveTab] = useState<'monitoring' | 'sessions' | 'formBank' | 'analytics' | 'notifications' | 'sync'>('monitoring');
   const [monitoringSubTab, setMonitoringSubTab] = useState<'analytics' | 'proctoring'>('analytics');
   const [reportDrawerSessionId, setReportDrawerSessionId] = useState<string | null>(null);
+  const [pedagogicalUnreadCount, setPedagogicalUnreadCount] = useState<number>(0);
+  const [livePedagogicalNotif, setLivePedagogicalNotif] = useState<PedagogicalNotification | null>(null);
+  const [deepLinkNotificationId, setDeepLinkNotificationId] = useState<string | null>(null);
   const [analyticsSessionSearch, setAnalyticsSessionSearch] = useState<string>('');
   const [useSimulationData, setUseSimulationData] = useState<boolean>(false);
   const [activePerceptionChartTab, setActivePerceptionChartTab] = useState<'source' | 'feeling' | 'goal' | 'debate' | 'rating'>('source');
@@ -916,8 +936,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, supervisedMode: data.supervisedMode } : s));
       showToast(
         data.supervisedMode
-          ? '🛡️ تم تفعيل "الوضع التشخيصي المراقب" بنجاح للجلسة المحددة.'
-          : '⚪ تم إيقاف "الوضع التشخيصي المراقب" بنجاح للجلسة المحددة.',
+          ? 'تم تفعيل "الوضع التشخيصي المراقب" بنجاح للجلسة المحددة.'
+          : 'تم إيقاف "الوضع التشخيصي المراقب" بنجاح للجلسة المحددة.',
         'success'
       );
     } catch (err: any) {
@@ -938,8 +958,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, isFrozen: data.isFrozen } : s));
       showToast(
         data.isFrozen
-          ? '❄️ تم تجميد الجلسة بنجاح وإيقاف استقبال الردود الجديدة.'
-          : '🔥 تم إلغاء تجميد الجلسة بنجاح، ويمكن للتلاميذ تقديم ردودهم.',
+          ? 'تم تجميد الجلسة بنجاح وإيقاف استقبال الردود الجديدة.'
+          : 'تم إلغاء تجميد الجلسة بنجاح، ويمكن للتلاميذ تقديم ردودهم.',
         'success'
       );
     } catch (err: any) {
@@ -1011,7 +1031,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   const prevTitle = document.title;
                   let flsh = false;
                   const flshInterval = setInterval(() => {
-                    document.title = flsh ? `⚠️ إنذار ثقة: ${name}` : 'PhiloScan';
+                    document.title = flsh ? `تنبيه ثقة: ${name}` : 'PhiloScan';
                     flsh = !flsh;
                   }, 400);
                   setTimeout(() => {
@@ -1059,7 +1079,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               const prevTitle = document.title;
               let flsh = false;
               const flshInterval = setInterval(() => {
-                document.title = flsh ? '🚨 مخالفة جديدة!' : 'PhiloScan';
+                document.title = flsh ? 'مخالفة جديدة - PhiloScan' : 'PhiloScan';
                 flsh = !flsh;
               }, 500);
 
@@ -1254,7 +1274,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
       setTeacherSession(updatedSession);
       localStorage.setItem('philoscan_teacher_session', JSON.stringify(updatedSession));
-      showToast('تم تحديث معلومات حسابك الشخصي بنجاح 🎆');
+      showToast('تم تحديث معلومات حسابك الشخصي بنجاح.');
       setShowProfileEditModal(false);
     } catch (err: any) {
       setProfileEditError(err.message || 'حدث خطأ ما أثناء الحفظ.');
@@ -2001,6 +2021,19 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             // ignore
           }
         });
+        es.addEventListener('notification:created', (evt: MessageEvent) => {
+          try {
+            const payload = JSON.parse(evt.data);
+            const notif: PedagogicalNotification | undefined = payload?.notification;
+            if (!notif?.id) return;
+            setLivePedagogicalNotif(notif);
+            if (notif.deliveryLog?.inApp !== false) {
+              setPedagogicalUnreadCount((c) => c + 1);
+            }
+          } catch {
+            // ignore
+          }
+        });
         es.onerror = () => {
           setRealtimeStatus(navigator.onLine ? 'reconnecting' : 'offline');
         };
@@ -2041,13 +2074,114 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         }
       }, 25000);
 
+      // Fetch unread pedagogical notification badge count once session token is ready
+      const refreshPedagogicalUnread = async () => {
+        try {
+          const headers: Record<string, string> = {};
+          if (teacherSession?.token) headers['Authorization'] = `Bearer ${teacherSession.token}`;
+          if (auth.currentUser) {
+            const idToken = await auth.currentUser.getIdToken().catch(() => '');
+            if (idToken) headers['x-firebase-id-token'] = idToken;
+          }
+          if (!headers['Authorization'] && !headers['x-firebase-id-token']) return;
+          const res = await fetch('/api/notifications', { headers });
+          if (res.ok) {
+            const data = await res.json();
+            if (typeof data?.unreadCount === 'number') {
+              setPedagogicalUnreadCount(data.unreadCount);
+            }
+          }
+        } catch {
+          // ignore silent unread refresh
+        }
+      };
+      refreshPedagogicalUnread();
+
       return () => {
         clearInterval(intervalId);
         if (es) es.close();
         unsubFirestore();
       };
     }
-  }, [loggedInTeacher, teacherSession?.role]);
+  }, [loggedInTeacher, teacherSession?.role, teacherSession?.token]);
+
+  // Ensure legacy non-admin teacher sessions stored without an HMAC token acquire one smoothly
+  useEffect(() => {
+    if (!teacherSession || teacherSession.token || teacherSession.role === 'admin') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/teacher/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: teacherSession.email,
+            fullName: teacherSession.fullName,
+            school: teacherSession.school,
+            regionalAcademy: teacherSession.regionalAcademy,
+            province: teacherSession.province,
+            role: 'teacher',
+            specialty: teacherSession.specialty || 'مادة الفلسفة',
+            yearsOfExperience: teacherSession.yearsOfExperience || '',
+          }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data?.token && !cancelled) {
+          const upgraded: TeacherSession = {
+            ...teacherSession,
+            teacherId: data.teacherId || teacherSession.teacherId,
+            token: data.token,
+          };
+          localStorage.setItem('philoscan_teacher_session', JSON.stringify(upgraded));
+          setTeacherSession(upgraded);
+        }
+      } catch {
+        // ignore silent token refresh failure
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [teacherSession]);
+
+  // Deep-link handler: only opens target report or notification after verified login & session lookup
+  useEffect(() => {
+    if (!loggedInTeacher || !teacherSession) return;
+    const hash = window.location.hash || '';
+    const qIdx = hash.indexOf('?');
+    if (qIdx === -1) return;
+
+    const params = new URLSearchParams(hash.slice(qIdx + 1));
+    const targetTab = params.get('tab');
+    const targetSessionId = (params.get('sessionId') || '').toUpperCase().trim();
+    const targetNotifId = params.get('notificationId');
+
+    if (targetNotifId) {
+      setDeepLinkNotificationId(targetNotifId);
+    }
+
+    if (targetTab === 'notifications') {
+      setTeacherActiveTab('notifications');
+      window.history.replaceState(null, '', '/#/teacher');
+      return;
+    }
+
+    if (targetSessionId && sessions.length > 0) {
+      const matched = sessions.find((s) => s.sessionId.toUpperCase() === targetSessionId);
+      if (matched) {
+        setSelectedSessionId(matched.sessionId);
+        setTeacherActiveTab(targetTab === 'analytics' ? 'analytics' : 'analytics');
+        setReportDrawerSessionId(matched.sessionId);
+      } else {
+        setTeacherActiveTab('notifications');
+      }
+      window.history.replaceState(null, '', '/#/teacher');
+    } else if (targetTab === 'analytics' && !targetSessionId) {
+      setTeacherActiveTab('analytics');
+      window.history.replaceState(null, '', '/#/teacher');
+    }
+  }, [loggedInTeacher, teacherSession, sessions]);
 
   // Autofill current teacher details inside session form when loaded
   useEffect(() => {
@@ -2220,7 +2354,41 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     }
   };
 
-  const handleQuickDemoLogin = () => {
+  const handleQuickDemoLogin = async () => {
+    try {
+      const res = await fetch('/api/teacher/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'professeur@philoscan.edu',
+          fullName: 'ذ. عماد المزراوي',
+          school: 'ثانوية ابن رشد التأهيلية',
+          regionalAcademy: 'الأكاديمية الجهوية لجهة الدار البيضاء سطات',
+          province: 'عمالة الدار البيضاء',
+          role: 'teacher',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const sessionObj: TeacherSession = {
+          email: data.email,
+          fullName: data.fullName,
+          school: data.school,
+          regionalAcademy: data.regionalAcademy,
+          province: data.province,
+          loggedInAt: data.loggedInAt || new Date().toISOString(),
+          role: 'teacher',
+          teacherId: data.teacherId || 'TCH-001',
+          token: data.token,
+        };
+        localStorage.setItem('philoscan_teacher_session', JSON.stringify(sessionObj));
+        localStorage.setItem('philoscan_teacher_email', sessionObj.email);
+        setTeacherSession(sessionObj);
+        return;
+      }
+    } catch {
+      // Offline fallback below
+    }
     const demoSession: TeacherSession = {
       email: 'professeur@philoscan.edu',
       fullName: 'ذ. عماد المزراوي',
@@ -2229,7 +2397,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       province: 'عمالة الدار البيضاء',
       loggedInAt: new Date().toISOString(),
       role: 'teacher',
-      teacherId: 'TCH-DEMO'
+      teacherId: 'TCH-001',
     };
     localStorage.setItem('philoscan_teacher_session', JSON.stringify(demoSession));
     localStorage.setItem('philoscan_teacher_email', 'professeur@philoscan.edu');
@@ -2595,14 +2763,30 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   const getClassInfo = (cls: ThinkingStyle) => {
     switch (cls) {
       case 'خوف معرفي':
-        return { color: 'text-red-700 bg-red-100 border-red-200', text: 'خوف معرفي', badge: '🔴' };
+        return {
+          color: 'text-red-700 bg-red-100 border-red-200',
+          text: 'خوف معرفي',
+          badge: <span className="w-2 h-2 rounded-full bg-red-500 inline-block shrink-0" />
+        };
       case 'تفكير سطحي':
-        return { color: 'text-amber-800 bg-amber-100 border-amber-200', text: 'تفكير سطحي', badge: '🟡' };
+        return {
+          color: 'text-amber-800 bg-amber-100 border-amber-200',
+          text: 'تفكير سطحي',
+          badge: <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shrink-0" />
+        };
       case 'فضول معرفي':
-        return { color: 'text-blue-700 bg-blue-100 border-blue-200', text: 'فضول معرفي', badge: '🔵' };
+        return {
+          color: 'text-blue-700 bg-blue-100 border-blue-200',
+          text: 'فضول معرفي',
+          badge: <span className="w-2 h-2 rounded-full bg-blue-500 inline-block shrink-0" />
+        };
       case 'تفكير نقدي':
       default:
-        return { color: 'text-emerald-700 bg-emerald-100 border-emerald-200', text: 'تفكير نقدي', badge: '🟢' };
+        return {
+          color: 'text-emerald-700 bg-emerald-100 border-emerald-200',
+          text: 'تفكير نقدي',
+          badge: <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shrink-0" />
+        };
     }
   };
 
@@ -2715,9 +2899,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   >
                     <div className="flex justify-between items-center mb-5 sm:mb-6">
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+                        <span className="w-3 h-3 bg-red-500 rounded-full"></span>
                         <span className="w-3 h-3 bg-yellow-500 rounded-full"></span>
-                        <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+                        <span className="w-3 h-3 bg-green-500 rounded-full"></span>
                       </div>
                       <button
                         type="button"
@@ -2764,7 +2948,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             animate={{ scale: 1 }}
                             className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/30 rounded-full flex items-center justify-center text-emerald-400"
                           >
-                            <CheckCircle className="w-10 h-10 animate-pulse" />
+                            <CheckCircle className="w-10 h-10" />
                           </motion.div>
                         ) : googleAuthLoadingState === 'error' ? (
                           <motion.div
@@ -2772,7 +2956,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             animate={{ scale: 1 }}
                             className="w-16 h-16 bg-red-500/10 border border-red-500/30 rounded-full flex items-center justify-center text-red-500"
                           >
-                            <XCircle className="w-10 h-10 animate-bounce" />
+                            <XCircle className="w-10 h-10" />
                           </motion.div>
                         ) : (
                           <div className="relative w-20 h-20 flex items-center justify-center">
@@ -2832,7 +3016,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 setGoogleAuthLoadingState(null);
                                 setGoogleAuthError(null);
                               }}
-                              className="flex-grow py-2.5 min-h-[44px] bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs rounded-xl transition active:scale-95 animate-pulse"
+                              className="flex-grow py-2.5 min-h-[44px] bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs rounded-xl transition active:scale-95"
                             >
                               إعادة المحاولة
                             </button>
@@ -2933,9 +3117,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             onClick={() => {
                               setShowOwnerPasswordConfirm(true);
                             }}
-                            className="text-[11px] text-slate-400 hover:text-slate-200 font-bold transition cursor-pointer min-h-[38px] px-3"
+                            className="text-[11px] text-slate-400 hover:text-slate-200 font-bold transition cursor-pointer min-h-[38px] px-3 inline-flex items-center gap-1.5"
                           >
-                            🗝️ الدخول الإداري لمالك المنصة (phillofikr@gmail.com)
+                            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                            <span>الدخول الإداري لمالك المنصة (phillofikr@gmail.com)</span>
                           </button>
                         </div>
                       </div>
@@ -3059,7 +3244,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     className="bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:p-4.5 space-y-3"
                   >
                     <div className="flex items-center gap-2 text-amber-800 text-xs font-bold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                       <span>نمط الإشراف العام مفعّل (Super Admin Mode)</span>
                     </div>
                     <p className="text-slate-600 text-[11px] leading-relaxed">
@@ -3266,7 +3451,6 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 bg-indigo-500 rounded-full animate-pulse shrink-0"></span>
                     <h2 className="text-base sm:text-xl md:text-2xl font-black text-slate-100 leading-snug">
                       لوحة الإدارة والمفتشية المركزية - فِيلوسكان
                     </h2>
@@ -3288,7 +3472,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   >
                     {unreadNotifsCount > 0 ? (
                       <>
-                        <BellRing className="w-4.5 h-4.5 text-amber-400 animate-bounce" />
+                        <BellRing className="w-4.5 h-4.5 text-amber-400" />
                         <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full text-[10px] w-5 h-5 flex items-center justify-center font-bold font-mono border border-slate-900 shadow-md">
                           {unreadNotifsCount}
                         </span>
@@ -3308,9 +3492,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         dir="rtl"
                       >
                         <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                          <div>
-                            <h4 className="font-extrabold text-sm text-slate-100">تنبيهات الاستمارات الواردة 🔔</h4>
-                            <p className="text-[10px] text-slate-400">تابع تسليم تلامذتك لبياناتهم المفتوحة مباشرة</p>
+                          <div className="flex items-center gap-2">
+                            <BellRing className="w-4 h-4 text-sky-400 shrink-0" />
+                            <div>
+                              <h4 className="font-extrabold text-sm text-slate-100">تنبيهات الاستمارات الواردة</h4>
+                              <p className="text-[10px] text-slate-400">تابع تسليم تلامذتك لبياناتهم المفتوحة مباشرة</p>
+                            </div>
                           </div>
                           {unreadNotifsCount > 0 && (
                             <button
@@ -3333,19 +3520,18 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             notifications.map((notif) => (
                               <div
                                 key={notif.id}
-                                className={`p-4 transition flex flex-col gap-2 relative group hover:bg-slate-800/30 text-right ${!notif.read ? 'bg-slate-800/60 border-r-4 border-amber-500' : 'bg-transparent'}`}
+                                className={`p-4 transition flex flex-col gap-2 relative group hover:bg-slate-800/30 text-right ${!notif.read ? 'bg-slate-800/60' : 'bg-transparent'}`}
                               >
-                                {!notif.read && (
-                                  <span className="absolute top-4 left-4 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-                                )}
                                 <div className="flex justify-between items-start pl-6 text-right">
-                                  <div className="text-right">
+                                  <div className="text-right space-y-0.5">
                                     <h5 className="font-bold text-xs text-slate-200">التلميذ(ة): <span className="text-white font-black">{notif.studentName}</span></h5>
-                                    <p className="text-[10px] text-slate-400 mt-1">
-                                      🏫 القسم: {notif.classNumber} | الشعبة: {notif.stream}
+                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                      <Building className="w-3 h-3 text-slate-500 shrink-0" />
+                                      <span>القسم: {notif.classNumber} · الشعبة: {notif.stream}</span>
                                     </p>
-                                    <p className="text-[9px] text-slate-500 mt-0.5">
-                                      📅 {new Date(notif.submittedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' })} - {new Date(notif.submittedAt).toLocaleDateString('ar-MA')}
+                                    <p className="text-[9px] text-slate-500 flex items-center gap-1 tabular-nums">
+                                      <Calendar className="w-3 h-3 text-slate-600 shrink-0" />
+                                      <span>{new Date(notif.submittedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' })} - {new Date(notif.submittedAt).toLocaleDateString('ar-MA')}</span>
                                     </p>
                                   </div>
                                 </div>
@@ -3358,9 +3544,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                       handleMarkAsRead(notif.id);
                                       setShowNotificationsDropdown(false);
                                     }}
-                                    className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded-lg transition shadow-sm cursor-pointer"
+                                    className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded-lg transition shadow-sm cursor-pointer inline-flex items-center gap-1"
                                   >
-                                    فتح وعرض التحليل 👁️
+                                    <Eye className="w-3 h-3" />
+                                    <span>فتح وعرض التحليل</span>
                                   </button>
                                   {!notif.read && (
                                     <button
@@ -3397,7 +3584,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   id="admin-tutorial-launcher-btn"
                 >
                   <HelpCircle className="w-4.5 h-4.5" />
-                  <span className="hidden sm:inline">الدليل السريع ❓</span>
+                  <span className="hidden sm:inline">الدليل السريع</span>
                 </button>
 
                 <button
@@ -3477,44 +3664,50 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('teachers')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'teachers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'teachers' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                👥 إدارة المستخدمين ({teachersList.length})
+                <Users className="w-3.5 h-3.5" />
+                <span>إدارة المستخدمين ({teachersList.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('institutions')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'institutions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'institutions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                🏢 إدارة المؤسسات ({adminUniqueSchools.length})
+                <Building className="w-3.5 h-3.5" />
+                <span>إدارة المؤسسات ({adminUniqueSchools.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('stats')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'stats' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'stats' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                📊 التحليلات والإحصائيات
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>التحليلات والإحصائيات</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('content')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'content' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'content' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                📚 إدارة المحتوى
+                <Library className="w-3.5 h-3.5" />
+                <span>إدارة المحتوى</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('system')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'system' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'system' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                ⚙️ إدارة النظام
+                <Settings className="w-3.5 h-3.5" />
+                <span>إدارة النظام</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveAdminTab('sessions')}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'sessions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'sessions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                ⏳ سجل الجلسات ({sessions.length})
+                <Clock className="w-3.5 h-3.5" />
+                <span>سجل الجلسات ({sessions.length})</span>
               </button>
               <button
                 type="button"
@@ -3522,9 +3715,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   setActiveAdminTab('reports');
                   fetchUserReports();
                 }}
-                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition ${activeAdminTab === 'reports' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`flex-1 min-w-[124px] py-2.5 text-center text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${activeAdminTab === 'reports' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
-                🚨 بلاغات جودة الخدمة ({userReports.length})
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>بلاغات جودة الخدمة ({userReports.length})</span>
               </button>
             </div>
 
@@ -3615,7 +3809,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               <td className="px-6 py-4 font-mono font-bold text-slate-500">{tch.id}</td>
                               <td className="px-6 py-4 font-bold text-slate-800">
                                 {tch.fullName}
-                                {isDisabled && <span className="mr-2 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md font-bold">معطل 🚫</span>}
+                                {isDisabled && <span className="mr-2 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md font-bold inline-flex items-center gap-1"><Ban className="w-3 h-3" /> معطل</span>}
                               </td>
                               <td className="px-6 py-4 font-mono text-slate-600">{tch.email}</td>
                               <td className="px-6 py-4 text-slate-600">
@@ -3632,9 +3826,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                   <button
                                     type="button"
                                     onClick={() => setEditingTeacher(tch)}
-                                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl transition text-[10px] font-bold"
+                                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl transition text-[10px] font-bold inline-flex items-center gap-1"
                                   >
-                                    تعديل ✏️
+                                    <FileEdit className="w-3 h-3" />
+                                    <span>تعديل</span>
                                   </button>
                                   <button
                                     type="button"
@@ -3756,7 +3951,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             {activeAdminTab === 'institutions' && (
               <div className="bg-white rounded-3xl sm:rounded-[32px] border border-slate-200 overflow-hidden shadow-sm space-y-5 sm:space-y-6 p-4 sm:p-6 text-right" dir="rtl">
                 <div className="border-b border-slate-100 pb-4">
-                  <h3 className="font-extrabold text-slate-800 text-sm">🏢 إدارة وهيكلة المؤسسات التعليمية المنتسبة</h3>
+                  <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    <Building className="w-4 h-4 text-[#0284C7]" />
+                    <span>إدارة وهيكلة المؤسسات التعليمية المنتسبة</span>
+                  </h3>
                   <p className="text-[11px] text-slate-400 mt-1 hidden sm:block">مراقبة توزع ومشاركة الثانويات التأهيلية وطاقم هيئة التدريس المفعل عبر التراب الوطني.</p>
                 </div>
                 
@@ -3862,7 +4060,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             {activeAdminTab === 'content' && (
               <div className="bg-white rounded-3xl sm:rounded-[32px] border border-slate-200 p-4 sm:p-6 shadow-sm space-y-5 sm:space-y-6 text-right" dir="rtl">
                 <div className="border-b border-slate-100 pb-4">
-                  <h3 className="font-extrabold text-slate-800 text-sm">📚 مركبة إدارة المحتوى الفكري والتربوي</h3>
+                  <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    <Library className="w-4 h-4 text-[#0284C7]" />
+                    <span>مركبة إدارة المحتوى الفكري والتربوي</span>
+                  </h3>
                   <p className="text-[11px] text-slate-400 mt-1">تنسيق وإدارة بنك الاستمارات التشخيصية، بنك الموارد ومقالات المحتوى البيداغوجي الموجه لرجال التعليم.</p>
                 </div>
 
@@ -3870,7 +4071,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Form Bank Sub-Section */}
                   <div className="border border-slate-200 rounded-[24px] p-5 space-y-4">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-black text-slate-800">📋 بنك الاستمارات التشخيصية</span>
+                      <span className="font-black text-slate-800 flex items-center gap-1.5">
+                        <ClipboardList className="w-4 h-4 text-[#0284C7]" />
+                        <span>بنك الاستمارات التشخيصية</span>
+                      </span>
                       <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-bold font-mono">
                         {customFormsList.length + 1} نماذج
                       </span>
@@ -3878,7 +4082,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     <div className="space-y-2.5">
                       <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex justify-between items-center">
                         <div>
-                          <span className="font-bold text-slate-800 block">الاستمارة الفلسفية المعيارية 🌟</span>
+                          <span className="font-bold text-slate-800 block">الاستمارة الفلسفية المعيارية</span>
                           <span className="text-[9px] text-slate-400 block font-mono">12 معيار تقييمي</span>
                         </div>
                         <span className="text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-bold">افتراضية نشطة</span>
@@ -3919,13 +4123,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Resource Bank Sub-Section */}
                   <div className="border border-slate-200 rounded-[24px] p-5 space-y-4">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-black text-slate-800">📖 بنك الموارد والتوثيق الفلسفي</span>
+                      <span className="font-black text-slate-800 flex items-center gap-1.5">
+                        <BookOpen className="w-4 h-4 text-[#0284C7]" />
+                        <span>بنك الموارد والتوثيق الفلسفي</span>
+                      </span>
                       <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-bold font-mono">نشط</span>
                     </div>
                     <div className="space-y-2.5">
                       <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex justify-between items-center">
                         <div>
-                          <span className="font-bold text-slate-800 block">كتاب التوجيهات التربوية الوطنية 📑</span>
+                          <span className="font-bold text-slate-800 block">كتاب التوجيهات التربوية الوطنية</span>
                           <span className="text-[9px] text-slate-400 block">ملف PDF رسمي (النسخة الكاملة)</span>
                         </div>
                         <span className="text-[9px] text-slate-500 font-bold">مفعل</span>
@@ -3958,13 +4165,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Educational Content Sub-Section */}
                   <div className="border border-slate-200 rounded-[24px] p-5 space-y-4">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-black text-slate-800">📝 المحتوى التعليمي والبيداغوجي</span>
+                      <span className="font-black text-slate-800 flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-[#0284C7]" />
+                        <span>المحتوى التعليمي والبيداغوجي</span>
+                      </span>
                       <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-lg font-bold font-mono">3 منشورات</span>
                     </div>
                     <div className="space-y-2.5">
                       <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex justify-between items-center">
                         <div>
-                          <span className="font-bold text-slate-800 block">منهجية تحليل القولة الإشكالية ✍️</span>
+                          <span className="font-bold text-slate-800 block">منهجية تحليل القولة الإشكالية</span>
                           <span className="text-[9px] text-slate-400 block">مقالة موجهة لمستوى الثانية بكالوريا</span>
                         </div>
                       </div>
@@ -3996,7 +4206,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             {activeAdminTab === 'system' && (
               <div className="bg-white rounded-3xl sm:rounded-[32px] border border-slate-200 p-4 sm:p-6 shadow-sm space-y-5 sm:space-y-6 text-right" dir="rtl">
                 <div className="border-b border-slate-100 pb-4">
-                  <h3 className="font-extrabold text-slate-800 text-sm">⚙️ إدارة وصيانة نظام فِيلوسكان</h3>
+                  <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    <Settings className="w-4 h-4 text-[#0284C7]" />
+                    <span>إدارة وصيانة نظام فِيلوسكان</span>
+                  </h3>
                   <p className="text-[11px] text-slate-400 mt-1 hidden sm:block">نسخ احتياطي فوري للسلامة القصوى، ومراقبة تفاصيل الأداء وقنوات الاتصال السحابية بـ Firebase.</p>
                 </div>
 
@@ -4005,7 +4218,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <div className="space-y-4">
                     {/* Backup Panel */}
                     <div className="p-4 sm:p-5 border border-slate-200 rounded-[20px] bg-slate-50 space-y-3">
-                      <h4 className="font-extrabold text-slate-800 text-xs">📦 النسخ الاحتياطي وحماية البيانات الاستراتيجية</h4>
+                      <h4 className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                        <Package className="w-4 h-4 text-[#0284C7]" />
+                        <span>النسخ الاحتياطي وحماية البيانات الاستراتيجية</span>
+                      </h4>
                       <p className="text-[11px] text-slate-400">تنزيل نسخة مطابقة للاستعمال المركزي تتضمن كافة الأساتذة، وجلسات التشخيص الحية، واستمارات التلاميذ المقيّمة من سحابة Firestore بملف JSON واحد.</p>
                       
                       <button
@@ -4030,25 +4246,29 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           document.body.appendChild(downloadAnchor);
                           downloadAnchor.click();
                           downloadAnchor.remove();
-                          showToast('🚀 تم توليد وتنزيل النسخة الاحتياطية الاستراتيجية بنجاح.');
+                          showToast('تم توليد وتنزيل النسخة الاحتياطية الاستراتيجية بنجاح.');
                         }}
                         className="w-full text-center py-3 min-h-[46px] bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        🎯 تحميل النسخة الاحتياطية الفورية (JSON)
+                        <Database className="w-4 h-4" />
+                        <span>تحميل النسخة الاحتياطية الفورية (JSON)</span>
                       </button>
                     </div>
 
                     {/* Network Logs and Errors Panel */}
                     <div className="p-4 sm:p-5 border border-slate-200 rounded-[20px] space-y-3">
-                      <h4 className="font-extrabold text-slate-800 text-xs">🛡️ مراقبة الأخطاء وقنوات السلامة السحابية</h4>
+                      <h4 className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <span>مراقبة الأخطاء وقنوات السلامة السحابية</span>
+                      </h4>
                       <div className="space-y-2.5 font-mono text-[10px]">
                         <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-50 p-2.5 rounded-lg">
                           <span className="text-slate-500 font-bold">اتصال Firestore DB Sockets</span>
-                          <span className="text-emerald-700 font-bold">✅ متصل ومستقر</span>
+                          <span className="text-emerald-700 font-bold inline-flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> متصل ومستقر</span>
                         </div>
                         <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-50 p-2.5 rounded-lg">
                           <span className="text-slate-500 font-bold">استجابة بوابة الذكاء الاصطناعي Gemini</span>
-                          <span className="text-emerald-700 font-bold">✅ مستقر (110ms)</span>
+                          <span className="text-emerald-700 font-bold inline-flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> مستقر (110ms)</span>
                         </div>
                         <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-50 p-2.5 rounded-lg">
                           <span className="text-slate-500 font-bold">سلك معالجة الاستشارات وإرسال البيانات</span>
@@ -4062,7 +4282,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <div className="space-y-4">
                     {/* Settings Switch panel */}
                     <div className="p-4 sm:p-5 border border-slate-200 rounded-[20px] space-y-4">
-                      <h4 className="font-extrabold text-slate-800 text-xs">⚙️ خيارات الرقابة والإعدادات الوطنية للمنصة</h4>
+                      <h4 className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                        <SlidersHorizontal className="w-4 h-4 text-[#0284C7]" />
+                        <span>خيارات الرقابة والإعدادات الوطنية للمنصة</span>
+                      </h4>
                       
                       <div className="space-y-3.5">
                         <div className="flex justify-between items-center gap-3">
@@ -4076,7 +4299,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               setSystemConfig(prev => ({ ...prev, maintenanceMode: !prev.maintenanceMode }));
                               showToast('تم تحديث وضع الصيانة المعيارية للمنصة بنجاح.');
                             }}
-                            className={`w-11 h-6 rounded-full transition relative inline-block cursor-pointer shrink-0 ${systemConfig.maintenanceMode ? 'bg-indigo-600 animate-pulse' : 'bg-slate-200'}`}
+                            className={`w-11 h-6 rounded-full transition relative inline-block cursor-pointer shrink-0 ${systemConfig.maintenanceMode ? 'bg-indigo-600' : 'bg-slate-200'}`}
                           >
                             <span className={`absolute top-0.5 right-0.5 bg-white w-5 h-5 rounded-full transition ${systemConfig.maintenanceMode ? 'translate-x-[-20px]' : 'translate-x-0'}`} />
                           </button>
@@ -4101,14 +4324,14 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                         <div className="flex justify-between items-center gap-3">
                           <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-slate-800 block">تنشيط الذكاء الاصطناعي Gemini 2.5 Flash / Pro ⚡</span>
-                            <span className="text-[10px] text-slate-400 block">استعمال تقنية الذكاء الفلسفي العالي لمؤسسة Google بالتحليل المنهجي الفوري.</span>
+                            <span className="text-xs font-extrabold text-slate-800 block">تنشيط الذكاء الاصطناعي Gemini 2.5 Flash / Pro</span>
+                            <span className="text-[10px] text-slate-400 block">استعمال تقنية الذكاء الفلسفي العالي بالتحليل المنهجي الفوري.</span>
                           </div>
                           <button
                             type="button"
                             onClick={() => {
                               setSystemConfig(prev => ({ ...prev, geminiProMode: !prev.geminiProMode }));
-                              showToast('تم خفض/تحديث إعدادات الذكاء الفلسفي التوليدي.');
+                              showToast('تم تحديث إعدادات الذكاء الفلسفي التوليدي.');
                             }}
                             className={`w-11 h-6 rounded-full transition relative inline-block cursor-pointer shrink-0 ${systemConfig.geminiProMode ? 'bg-emerald-600' : 'bg-slate-200'}`}
                           >
@@ -4137,7 +4360,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                     {/* Performance Monitoring Stats panel */}
                     <div className="p-5 border border-slate-200 rounded-[20px] space-y-3.5 bg-white">
-                      <h4 className="font-extrabold text-slate-800 text-xs">🚀 مراقبة وحماية أداء وموارد خادم الاستضافة</h4>
+                      <h4 className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-[#0284C7]" />
+                        <span>مراقبة وحماية أداء وموارد خادم الاستضافة</span>
+                      </h4>
                       
                       <div className="space-y-3.5">
                         <div className="space-y-1">
@@ -4402,7 +4628,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteSubmission(sub.id)}
-                                  className="p-2 text-red-600 hover:bg-red-50 border border-red-100 rounded-xl transition text-[10px] font-bold inline-flex items-center animate-pulse"
+                                  className="p-2 text-red-600 hover:bg-red-50 border border-red-100 rounded-xl transition text-[10px] font-bold inline-flex items-center"
                                   title="حذف ملف التلميذ"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -4436,7 +4662,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     onClick={fetchUserReports}
                     className="w-full sm:w-auto justify-center py-2.5 px-4 min-h-[44px] bg-slate-100 ring-1 ring-slate-200 text-slate-600 hover:bg-slate-200 font-bold transition rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-sm"
                   >
-                    🔄 تحديث قائمة البلاغات
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>تحديث قائمة البلاغات</span>
                   </button>
                 </div>
 
@@ -4447,8 +4674,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <p className="text-xs text-slate-400 font-bold">جاري تحميل سجل البلاغات والتحديثات...</p>
                     </div>
                   ) : userReports.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-slate-200 p-6 italic text-xs">
-                      📭 لا توجد بلاغات مرسلة أو مسجلة في جينات المنصة حتى الآن.
+                    <div className="py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-slate-200 p-6 italic text-xs flex flex-col items-center gap-2">
+                      <Inbox className="w-6 h-6 text-slate-400" />
+                      <span>لا توجد بلاغات مرسلة أو مسجلة في المنصة حتى الآن.</span>
                     </div>
                   ) : (
                     <>
@@ -4456,35 +4684,35 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <div className="md:hidden space-y-3" dir="rtl">
                         {userReports.map((report) => {
                           let statusBadge = "bg-blue-50 text-blue-600 border-blue-100";
-                          let statusText = "جديد 🆕";
+                          let statusText = "جديد";
                           if (report.status === "review") {
                             statusBadge = "bg-amber-50 text-amber-600 border-amber-100";
-                            statusText = "قيد المراجعة 👀";
+                            statusText = "قيد المراجعة";
                           } else if (report.status === "resolved") {
                             statusBadge = "bg-emerald-50 text-emerald-600 border-emerald-100";
-                            statusText = "تم الحل ✅";
+                            statusText = "تم الحل";
                           } else if (report.status === "closed") {
                             statusBadge = "bg-slate-50 text-slate-500 border-slate-200";
-                            statusText = "مغلق 🔒";
+                            statusText = "مغلق";
                           }
 
                           let typeBadge = "bg-rose-50 text-rose-700 border-rose-100/50";
-                          let typeText = "خطأ برمجي 🔴";
+                          let typeText = "خطأ برمجي";
                           if (report.reportType === "form_error") {
                             typeBadge = "bg-yellow-50 text-yellow-800 border-yellow-100/50";
-                            typeText = "استمارة وأسئلة 📝";
+                            typeText = "استمارة وأسئلة";
                           } else if (report.reportType === "analytics_error") {
                             typeBadge = "bg-purple-50 text-purple-700 border-purple-100/50";
-                            typeText = "تحليلات الجلسة 📊";
+                            typeText = "تحليلات الجلسة";
                           } else if (report.reportType === "dev_suggestion") {
                             typeBadge = "bg-sky-50 text-sky-700 border-sky-100/50";
-                            typeText = "اقتراح واجهات 💡";
+                            typeText = "اقتراح واجهات";
                           } else if (report.reportType === "new_feature") {
                             typeBadge = "bg-emerald-50 text-emerald-700 border-emerald-100/50";
-                            typeText = "طلب ميزة جديدة ✨";
+                            typeText = "طلب ميزة جديدة";
                           } else if (report.reportType === "general_comment") {
                             typeBadge = "bg-slate-50 text-slate-600 border-slate-200";
-                            typeText = "ملاحظة عامة 💬";
+                            typeText = "ملاحظة عامة";
                           }
 
                           return (
@@ -4521,10 +4749,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 onChange={(e) => handleUpdateReportStatus(report.id, e.target.value)}
                                 className="w-full min-h-[44px] bg-white border border-slate-200 px-3 py-2 text-base sm:text-xs rounded-xl text-slate-700 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                               >
-                                <option value="new">إبقاء كجديد 🆕</option>
-                                <option value="review">مراجعة ودراسة 👀</option>
-                                <option value="resolved">تأكيد الحل ✅</option>
-                                <option value="closed">إغلاق وتخزين 🔒</option>
+                                <option value="new">إبقاء كجديد</option>
+                                <option value="review">مراجعة ودراسة</option>
+                                <option value="resolved">تأكيد الحل</option>
+                                <option value="closed">إغلاق وتخزين</option>
                               </select>
                             </div>
                           );
@@ -4546,35 +4774,35 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <tbody className="divide-y divide-slate-100">
                             {userReports.map((report) => {
                               let statusBadge = "bg-blue-50 text-blue-600 border-blue-100";
-                              let statusText = "جديد 🆕";
+                              let statusText = "جديد";
                               if (report.status === "review") {
                                 statusBadge = "bg-amber-50 text-amber-600 border-amber-100";
-                                statusText = "قيد المراجعة 👀";
+                                statusText = "قيد المراجعة";
                               } else if (report.status === "resolved") {
                                 statusBadge = "bg-emerald-50 text-emerald-600 border-emerald-100";
-                                statusText = "تم الحل ✅";
+                                statusText = "تم الحل";
                               } else if (report.status === "closed") {
                                 statusBadge = "bg-slate-50 text-slate-500 border-slate-200";
-                                statusText = "مغلق 🔒";
+                                statusText = "مغلق";
                               }
 
                               let typeBadge = "bg-rose-50 text-rose-700 border-rose-100/50";
-                              let typeText = "خطأ برمجي 🔴";
+                              let typeText = "خطأ برمجي";
                               if (report.reportType === "form_error") {
                                 typeBadge = "bg-yellow-50 text-yellow-800 border-yellow-100/50";
-                                typeText = "استمارة وأسئلة 📝";
+                                typeText = "استمارة وأسئلة";
                               } else if (report.reportType === "analytics_error") {
                                 typeBadge = "bg-purple-50 text-purple-700 border-purple-100/50";
-                                typeText = "تحليلات الجلسة 📊";
+                                typeText = "تحليلات الجلسة";
                               } else if (report.reportType === "dev_suggestion") {
                                 typeBadge = "bg-sky-50 text-sky-700 border-sky-100/50";
-                                typeText = "اقتراح واجهات 💡";
+                                typeText = "اقتراح واجهات";
                               } else if (report.reportType === "new_feature") {
                                 typeBadge = "bg-emerald-50 text-emerald-700 border-emerald-100/50";
-                                typeText = "طلب ميزة جديدة ✨";
+                                typeText = "طلب ميزة جديدة";
                               } else if (report.reportType === "general_comment") {
                                 typeBadge = "bg-slate-50 text-slate-600 border-slate-200";
-                                typeText = "ملاحظة عامة 💬";
+                                typeText = "ملاحظة عامة";
                               }
 
                               return (
@@ -4589,8 +4817,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                     <p className="text-slate-500 leading-relaxed text-[10px] break-all max-h-16 overflow-y-auto">
                                       {report.description}
                                     </p>
-                                    <span className="text-[9px] text-slate-400 font-mono block mt-1.5">
-                                      📅 {new Date(report.timestamp).toLocaleString('ar-MA')}
+                                    <span className="text-[9px] text-slate-400 font-mono inline-flex items-center gap-1 mt-1.5">
+                                      <Calendar className="w-3 h-3" />
+                                      <span>{new Date(report.timestamp).toLocaleString('ar-MA')}</span>
                                     </span>
                                   </td>
                                   <td className="px-6 py-4 space-y-1.5">
@@ -4628,10 +4857,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                         onChange={(e) => handleUpdateReportStatus(report.id, e.target.value)}
                                         className="bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-1 text-[10px] rounded-lg text-slate-700 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                                       >
-                                        <option value="new">إبقاء كجديد 🆕</option>
-                                        <option value="review">مراجعة ودراسة 👀</option>
-                                        <option value="resolved">تأكيد الحل ✅</option>
-                                        <option value="closed">إغلاق وتخزين 🔒</option>
+                                        <option value="new">إبقاء كجديد</option>
+                                        <option value="review">مراجعة ودراسة</option>
+                                        <option value="resolved">تأكيد الحل</option>
+                                        <option value="closed">إغلاق وتخزين</option>
                                       </select>
                                     </div>
                                   </td>
@@ -4672,14 +4901,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     </div>
                   )}
                   {teacherSession?.role === 'admin' && (
-                    <span className="absolute -bottom-1 -right-1 bg-amber-500 text-slate-950 font-extrabold text-[9px] px-1.5 py-0.5 rounded-full shadow-md animate-pulse">
+                    <span className="absolute -bottom-1 -right-1 bg-amber-500 text-slate-950 font-extrabold text-[9px] px-1.5 py-0.5 rounded-full shadow-md">
                       مدير
                     </span>
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center flex-wrap gap-x-2.5 gap-y-1.5">
-                    <span className="inline-block w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></span>
                     <h2 className="text-lg sm:text-xl md:text-2xl font-black text-slate-100 break-words">
                       {teacherSession?.fullName || 'الأستاذ المفوّض الموجه'}
                     </h2>
@@ -4694,14 +4922,32 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       </button>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-1.5 text-slate-400 text-[11px] sm:text-xs mt-2.5 bg-slate-800 p-3 sm:p-3.5 rounded-2xl border border-slate-800">
-                    <div className="truncate">📌 البريد: <span className="text-slate-200 font-mono font-semibold">{teacherSession?.email}</span></div>
-                    <div>🎓 التخصص: <span className="text-teal-400 font-sans font-semibold">{teacherSession?.specialty || 'مادة الفلسفة'}</span></div>
-                    <div>🏫 المؤسسة: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.school}</span></div>
-                    <div>🌍 الأكاديمية: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.regionalAcademy}</span></div>
-                    <div>📍 العمالة: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.province}</span></div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-2 text-slate-400 text-[11px] sm:text-xs mt-2.5 bg-slate-800 p-3 sm:p-3.5 rounded-2xl border border-slate-700/60">
+                    <div className="truncate flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span>البريد: <span className="text-slate-200 font-mono font-semibold">{teacherSession?.email}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <GraduationCap className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                      <span>التخصص: <span className="text-teal-400 font-sans font-semibold">{teacherSession?.specialty || 'مادة الفلسفة'}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>المؤسسة: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.school}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>الأكاديمية: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.regionalAcademy}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>العمالة: <span className="text-slate-200 font-sans font-semibold">{teacherSession?.province}</span></span>
+                    </div>
                     {teacherSession?.yearsOfExperience && (
-                      <div>⏳ سنوات الخبرة: <span className="text-indigo-400 font-sans font-semibold">{teacherSession.yearsOfExperience} {Number(teacherSession.yearsOfExperience) > 10 ? 'عاماً' : 'سنوات'}</span></div>
+                      <div className="flex items-center gap-1.5 tabular-nums">
+                        <Calendar className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span>سنوات الخبرة: <span className="text-sky-300 font-sans font-semibold">{teacherSession.yearsOfExperience} {Number(teacherSession.yearsOfExperience) > 10 ? 'عاماً' : 'سنوات'}</span></span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -4753,7 +4999,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   >
                     {unreadNotifsCount > 0 ? (
                       <>
-                        <BellRing className="w-4.5 h-4.5 text-amber-400 animate-bounce" />
+                        <BellRing className="w-4.5 h-4.5 text-amber-400" />
                         <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full text-[10px] w-5 h-5 flex items-center justify-center font-bold font-mono border border-slate-900 shadow-md">
                           {unreadNotifsCount}
                         </span>
@@ -4773,9 +5019,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         dir="rtl"
                       >
                         <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                          <div>
-                            <h4 className="font-extrabold text-sm text-slate-100">تنبيهات الاستمارات الواردة 🔔</h4>
-                            <p className="text-[10px] text-slate-400">تابع تسليم تلامذتك لبياناتهم المفتوحة مباشرة</p>
+                          <div className="flex items-center gap-2">
+                            <BellRing className="w-4 h-4 text-sky-400 shrink-0" />
+                            <div>
+                              <h4 className="font-extrabold text-sm text-slate-100">تنبيهات الاستمارات الواردة</h4>
+                              <p className="text-[10px] text-slate-400">تابع تسليم تلامذتك لبياناتهم المفتوحة مباشرة</p>
+                            </div>
                           </div>
                           {unreadNotifsCount > 0 && (
                             <button
@@ -4798,19 +5047,18 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             notifications.map((notif) => (
                               <div
                                 key={notif.id}
-                                className={`p-4 transition flex flex-col gap-2 relative group hover:bg-slate-800/30 text-right ${!notif.read ? 'bg-slate-800/60 border-r-4 border-amber-500' : 'bg-transparent'}`}
+                                className={`p-4 transition flex flex-col gap-2 relative group hover:bg-slate-800/30 text-right ${!notif.read ? 'bg-slate-800/60' : 'bg-transparent'}`}
                               >
-                                {!notif.read && (
-                                  <span className="absolute top-4 left-4 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-                                )}
                                 <div className="flex justify-between items-start pl-6 text-right">
-                                  <div className="text-right">
+                                  <div className="text-right space-y-0.5">
                                     <h5 className="font-bold text-xs text-slate-200">التلميذ(ة): <span className="text-white font-black">{notif.studentName}</span></h5>
-                                    <p className="text-[10px] text-slate-400 mt-1">
-                                      🏫 القسم: {notif.classNumber} | الشعبة: {notif.stream}
+                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                      <Building className="w-3 h-3 text-slate-500 shrink-0" />
+                                      <span>القسم: {notif.classNumber} · الشعبة: {notif.stream}</span>
                                     </p>
-                                    <p className="text-[9px] text-slate-500 mt-0.5">
-                                      📅 {new Date(notif.submittedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' })} - {new Date(notif.submittedAt).toLocaleDateString('ar-MA')}
+                                    <p className="text-[9px] text-slate-500 flex items-center gap-1 tabular-nums">
+                                      <Calendar className="w-3 h-3 text-slate-600 shrink-0" />
+                                      <span>{new Date(notif.submittedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' })} - {new Date(notif.submittedAt).toLocaleDateString('ar-MA')}</span>
                                     </p>
                                   </div>
                                 </div>
@@ -4823,9 +5071,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                       handleMarkAsRead(notif.id);
                                       setShowNotificationsDropdown(false);
                                     }}
-                                    className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded-lg transition shadow-sm cursor-pointer"
+                                    className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded-lg transition shadow-sm cursor-pointer inline-flex items-center gap-1"
                                   >
-                                    فتح وعرض التحليل 👁️
+                                    <Eye className="w-3 h-3" />
+                                    <span>فتح وعرض التحليل</span>
                                   </button>
                                   {!notif.read && (
                                     <button
@@ -4862,7 +5111,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   id="teacher-tutorial-launcher-btn"
                 >
                   <HelpCircle className="w-4.5 h-4.5" />
-                  <span className="hidden sm:inline">الدليل السريع ❓</span>
+                  <span className="hidden sm:inline">الدليل السريع</span>
                 </button>
 
                 <button
@@ -4897,13 +5146,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 onClick={() => setTeacherActiveTab('monitoring')}
                 whileHover={{ scale: 1.02, y: -0.5 }}
                 whileTap={{ scale: 0.98 }}
-                className={`py-2.5 px-5 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                   teacherActiveTab === 'monitoring'
-                    ? 'bg-white text-indigo-700 shadow-sm'
+                    ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <BarChart3 className="w-4 h-4" />
+                <BarChart3 className="w-4 h-4 text-sky-600" />
                 <span>لوحة القيادة والمراقبة</span>
               </motion.button>
               <motion.button
@@ -4911,27 +5160,46 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 onClick={() => setTeacherActiveTab('analytics')}
                 whileHover={{ scale: 1.02, y: -0.5 }}
                 whileTap={{ scale: 0.98 }}
-                className={`py-2.5 px-5 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                   teacherActiveTab === 'analytics'
-                    ? 'bg-white text-emerald-700 shadow-sm'
+                    ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
-                <span>التحليلات العامة 📈</span>
+                <span>التحليلات العامة</span>
+              </motion.button>
+              <motion.button
+                type="button"
+                onClick={() => setTeacherActiveTab('notifications')}
+                whileHover={{ scale: 1.02, y: -0.5 }}
+                whileTap={{ scale: 0.98 }}
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                  teacherActiveTab === 'notifications'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <BellRing className="w-4 h-4 text-sky-600" />
+                <span>الإشعارات والتنبيهات</span>
+                {pedagogicalUnreadCount > 0 && (
+                  <span className="font-mono tabular-nums text-[11px] bg-sky-600 text-white px-1.5 py-0.5 rounded-md leading-none">
+                    {pedagogicalUnreadCount}
+                  </span>
+                )}
               </motion.button>
               <motion.button
                 type="button"
                 onClick={() => setTeacherActiveTab('sessions')}
                 whileHover={{ scale: 1.02, y: -0.5 }}
                 whileTap={{ scale: 0.98 }}
-                className={`py-2.5 px-5 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                   teacherActiveTab === 'sessions'
-                    ? 'bg-white text-indigo-700 shadow-sm'
+                    ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <Calendar className="w-4 h-4" />
+                <Calendar className="w-4 h-4 text-sky-600" />
                 <span>نظام الجلسات</span>
               </motion.button>
               <motion.button
@@ -4939,13 +5207,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 onClick={() => setTeacherActiveTab('formBank')}
                 whileHover={{ scale: 1.02, y: -0.5 }}
                 whileTap={{ scale: 0.98 }}
-                className={`py-2.5 px-5 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                   teacherActiveTab === 'formBank'
-                    ? 'bg-white text-indigo-700 shadow-sm'
+                    ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <BookOpen className="w-4 h-4" />
+                <BookOpen className="w-4 h-4 text-sky-600" />
                 <span>بنك الاستمارات والمنشئ</span>
               </motion.button>
               <motion.button
@@ -4953,9 +5221,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 onClick={() => setTeacherActiveTab('sync')}
                 whileHover={{ scale: 1.02, y: -0.5 }}
                 whileTap={{ scale: 0.98 }}
-                className={`py-2.5 px-5 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                className={`py-2.5 px-4 text-center text-xs font-black rounded-xl transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                   teacherActiveTab === 'sync'
-                    ? 'bg-white text-emerald-700 shadow-sm'
+                    ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -4991,8 +5259,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        <ShieldCheck className="w-4 h-4 shrink-0 animate-pulse" />
-                        <span className="truncate">المراقبة والامتحانات 🛡️</span>
+                        <ShieldCheck className="w-4 h-4 shrink-0" />
+                        <span className="truncate">المراقبة والامتحانات</span>
                       </button>
                     </div>
 
@@ -5006,7 +5274,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               ? 'bg-amber-100 border-amber-200 text-amber-800 font-bold'
                               : 'bg-slate-100 border-slate-200 text-slate-500 font-semibold'
                           }`}>
-                            {activeSess.supervisedMode ? 'الوضع التشخيصي المراقب: نشِيط البث 📣' : 'الوضع التشخيصي العادي 🔒'}
+                            {activeSess.supervisedMode ? 'الوضع التشخيصي المراقب: نشط البث' : 'الوضع التشخيصي العادي'}
                           </span>
                           <span className="text-xs bg-slate-100 border text-slate-700 font-extrabold px-3 py-1 rounded-lg font-mono">
                             رمز الجلسة: {activeSess.sessionId}
@@ -5032,9 +5300,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                           }`}
                         >
-                          <BellRing className={`w-5 h-5 ${bellCount > 0 ? 'animate-bounce text-red-600' : 'text-slate-500'}`} />
+                          <BellRing className={`w-5 h-5 ${bellCount > 0 ? 'text-red-600' : 'text-slate-500'}`} />
                           {bellCount > 0 && (
-                            <span className="bg-red-600 text-white font-mono font-black text-[10px] px-2 py-0.5 rounded-full animate-pulse">
+                            <span className="bg-red-600 text-white font-mono font-black text-[10px] px-2 py-0.5 rounded-full tabular-nums">
                               {bellCount} مخالفة جديدة
                             </span>
                           )}
@@ -5067,8 +5335,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                       <p className="font-extrabold text-white flex items-center justify-between">
                                         <span>تلميذ: <span className="text-yellow-400">{notif.studentName}</span></span>
                                         {notif.isLowTrustAlert && (
-                                          <span className="px-1.5 py-0.5 bg-red-600 text-[8px] rounded text-white animate-pulse font-black">
-                                            إنذار ثقة ذكي ⚠️
+                                          <span className="px-1.5 py-0.5 bg-red-600 text-[8px] rounded text-white font-black inline-flex items-center gap-1">
+                                            <AlertTriangle className="w-2.5 h-2.5" />
+                                            <span>إنذار ثقة ذكي</span>
                                           </span>
                                         )}
                                       </p>
@@ -5140,8 +5409,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <div className="lg:col-span-2 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-white p-4 sm:p-6 rounded-3xl sm:rounded-[28px] border border-slate-800 shadow-md">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3 mb-4">
                       <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 bg-sky-400 rounded-full animate-pulse shrink-0"></span>
-                        <h4 className="font-extrabold text-xs sm:text-sm">🕒 آخر النشاطات والعمليات المستجدة (Live Feed)</h4>
+                        <span className="w-2 h-2 bg-sky-400 rounded-full shrink-0"></span>
+                        <h4 className="font-extrabold text-xs sm:text-sm inline-flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-sky-400 shrink-0" />
+                          <span>آخر النشاطات والعمليات المستجدة (Live Feed)</span>
+                        </h4>
                       </div>
                       <span className="text-[10px] text-slate-400 font-mono">تحديث مستمر</span>
                     </div>
@@ -5155,7 +5427,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       ) : (
                         submissions.slice(0, 3).map((sub, idx) => (
                           <div key={`live-feed-sub-${sub.id || idx}`} className="flex gap-3 items-start bg-slate-800/40 p-3 rounded-xl border border-slate-800/60 hover:bg-slate-800/30 transition">
-                            <span className="text-lg flex-shrink-0">📝</span>
+                            <FileEdit className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-bold text-slate-100">
                                 قدّم التلميذ(ة) <span className="text-amber-400 font-extrabold">{sub.studentName}</span> تشخيصاً في فِيلوسكان.
@@ -5164,7 +5436,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 القسم: فوج {sub.classNumber} - المؤسسة: {sub.institution || 'ابن رشد'} | التصنيف: <span className="text-sky-300 font-bold">{sub.analysis?.classification || 'غير محدد'}</span>
                               </p>
                             </div>
-                            <span className="text-[9px] text-slate-500 font-mono shrink-0">
+                            <span className="text-[9px] text-slate-500 font-mono shrink-0 tabular-nums">
                               {sub.submittedAt ? new Date(sub.submittedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' }) : 'قريباً'}
                             </span>
                           </div>
@@ -5173,7 +5445,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       
                       {sessions.slice(0, 2).map((sess, idx) => (
                         <div key={`sess-act-${idx}`} className="flex gap-3 items-start bg-indigo-950/25 p-3 rounded-xl border border-indigo-900/40 hover:bg-indigo-950/30 transition">
-                          <span className="text-sm flex-shrink-0">🏫</span>
+                          <Building className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-slate-200">
                               تم إطلاق جلسة جديدة باسم <span className="text-indigo-300 font-extrabold">{sess.title}</span>.
@@ -5190,13 +5462,19 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   
                   {/* Cognitive Performance Indexes */}
                   <div className="bg-white p-4 sm:p-6 rounded-3xl sm:rounded-[28px] border border-slate-200 shadow-sm space-y-3.5 flex flex-col justify-center">
-                    <h4 className="font-extrabold text-xs text-slate-700 pb-2 border-b">📊 مؤشرات التفكير والتمثلات العامة</h4>
+                    <h4 className="font-extrabold text-xs text-slate-700 pb-2 border-b flex items-center gap-1.5">
+                      <BarChart3 className="w-4 h-4 text-sky-600 shrink-0" />
+                      <span>مؤشرات التفكير والتمثلات العامة</span>
+                    </h4>
                     
                     <div className="space-y-3 flex-1 flex flex-col justify-around">
                       <div>
                         <div className="flex justify-between items-center text-xs font-bold mb-1">
-                          <span className="text-emerald-700">🧠 تفكير نقدي عقلاني</span>
-                          <span className="font-mono font-bold text-slate-600">{countByStyle('تفكير نقدي')} ({percentageByStyle('تفكير نقدي')}%)</span>
+                          <span className="text-emerald-700 inline-flex items-center gap-1.5">
+                            <Brain className="w-3.5 h-3.5 shrink-0" />
+                            <span>تفكير نقدي عقلاني</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-600 tabular-nums">{countByStyle('تفكير نقدي')} ({percentageByStyle('تفكير نقدي')}%)</span>
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className="h-full bg-emerald-500 rounded-full transition-all duration-300" style={{ width: `${percentageByStyle('تفكير نقدي')}%` }}></div>
@@ -5204,8 +5482,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       </div>
                       <div>
                         <div className="flex justify-between items-center text-xs font-bold mb-1">
-                          <span className="text-blue-700">🔍 فضول وتساؤل فلسفي</span>
-                          <span className="font-mono font-bold text-slate-600">{countByStyle('فضول معرفي')} ({percentageByStyle('فضول معرفي')}%)</span>
+                          <span className="text-blue-700 inline-flex items-center gap-1.5">
+                            <Search className="w-3.5 h-3.5 shrink-0" />
+                            <span>فضول وتساؤل فلسفي</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-600 tabular-nums">{countByStyle('فضول معرفي')} ({percentageByStyle('فضول معرفي')}%)</span>
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${percentageByStyle('فضول معرفي')}%` }}></div>
@@ -5213,8 +5494,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       </div>
                       <div>
                         <div className="flex justify-between items-center text-xs font-bold mb-1">
-                          <span className="text-amber-800">💡 تفكير متسرع أو سطحي</span>
-                          <span className="font-mono font-bold text-slate-600">{countByStyle('تفكير سطحي')} ({percentageByStyle('تفكير سطحي')}%)</span>
+                          <span className="text-amber-800 inline-flex items-center gap-1.5">
+                            <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                            <span>تفكير متسرع أو سطحي</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-600 tabular-nums">{countByStyle('تفكير سطحي')} ({percentageByStyle('تفكير سطحي')}%)</span>
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className="h-full bg-amber-400 rounded-full transition-all duration-300" style={{ width: `${percentageByStyle('تفكير سطحي')}%` }}></div>
@@ -5222,8 +5506,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       </div>
                       <div>
                         <div className="flex justify-between items-center text-xs font-bold mb-1">
-                          <span className="text-red-700">⚠️ توجس وخوف معرفي</span>
-                          <span className="font-mono font-bold text-slate-600">{countByStyle('خوف معرفي')} ({percentageByStyle('خوف معرفي')}%)</span>
+                          <span className="text-red-700 inline-flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            <span>توجس وخوف معرفي</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-600 tabular-nums">{countByStyle('خوف معرفي')} ({percentageByStyle('خوف معرفي')}%)</span>
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className="h-full bg-red-500 rounded-full transition-all duration-300" style={{ width: `${percentageByStyle('خوف معرفي')}%` }}></div>
@@ -5593,7 +5880,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               }));
 
               const ratingChartData = Object.entries(ratingCounts).map(([rating, val]) => ({
-                name: `${rating} 🌟`,
+                name: `${rating} نجوم`,
                 'عدد التلاميذ': val,
                 'النسبة %': totalStudents > 0 ? Math.round((val / totalStudents) * 100) : 0,
                 color: rating === '5' ? '#f59e0b' : rating === '4' ? '#fbbf24' : rating === '3' ? '#fcd34d' : rating === '2' ? '#fde68a' : '#fef3c7'
@@ -5803,7 +6090,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <div>
                         <h3 className="text-sm sm:text-base font-extrabold text-slate-900 flex items-center gap-2">
                           <span className="w-3 h-3 rounded-full bg-indigo-600 block shrink-0"></span>
-                          توزيع نسب تصورات وتمثلات التلاميذ لدرس الفلسفة 🗣️📊
+                          توزيع نسب تصورات وتمثلات التلاميذ لدرس الفلسفة
                         </h3>
                         <p className="hidden sm:block text-[11px] text-slate-400 mt-1 font-semibold leading-relaxed">
                           مخططات بيانية تفاعلية تستعرض البنيان الوجداني والمفاهيمي لتلاميذ الجلسة لمساعدتك في صياغة وضعيات المشكلة المناسبة.
@@ -6001,11 +6288,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             <span>ملاحظات تربوية واستنتاجات ديداكتيكية لصفّك:</span>
                           </p>
                           <h4 className="text-sm font-black text-slate-800 mt-2">
-                            {activePerceptionChartTab === 'source' && 'تحليل مصادر الفكرة المسبقة للقسم 🏫'}
-                            {activePerceptionChartTab === 'feeling' && 'تحليل المؤشرات والنزعات الوجدانية للدرس 💖'}
-                            {activePerceptionChartTab === 'goal' && 'فهم غايات مادة الفلسفة في وعي التلاميذ 🎯'}
-                            {activePerceptionChartTab === 'debate' && 'تحديد أنماط واستجابات التفاعل الحواري 🗣️'}
-                            {activePerceptionChartTab === 'rating' && 'تقييم أهمية الفلسفة وجدوى الدرس لصفّك 🌟'}
+                            {activePerceptionChartTab === 'source' && 'تحليل مصادر الفكرة المسبقة للقسم'}
+                            {activePerceptionChartTab === 'feeling' && 'تحليل المؤشرات والنزعات الوجدانية للدرس'}
+                            {activePerceptionChartTab === 'goal' && 'فهم غايات مادة الفلسفة في وعي التلاميذ'}
+                            {activePerceptionChartTab === 'debate' && 'تحديد أنماط واستجابات التفاعل الحواري'}
+                            {activePerceptionChartTab === 'rating' && 'تقييم أهمية الفلسفة وجدوى الدرس لصفّك'}
                           </h4>
 
                           <div className="text-xs text-slate-600 leading-relaxed font-semibold space-y-3 mt-3">
@@ -6052,7 +6339,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         </div>
 
                         <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-extrabold">
-                          <span>تحديث تفاعلي حي ⚡</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Activity className="w-3.5 h-3.5 text-sky-600" />
+                            <span>تحديث تفاعلي حي</span>
+                          </span>
                           <span>المصدر: إجابات تلاميذ الجلسة {selectedSessionId}</span>
                         </div>
                       </div>
@@ -6078,17 +6368,20 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Horizontal Bar breakdown guides */}
                   <div className="flex-1 max-w-md w-full space-y-4">
                     {[
-                      { label: '🟢 نمط التفكير النقدي', val: percentageByStyle('تفكير نقدي'), color: 'bg-emerald-500', count: countByStyle('تفكير نقدي') },
-                      { label: '🔵 نمط الفضول المعرفي', val: percentageByStyle('فضول معرفي'), color: 'bg-blue-500', count: countByStyle('فضول معرفي') },
-                      { label: '🟡 نمط التفكير السطحي', val: percentageByStyle('تفكير سطحي'), color: 'bg-amber-400', count: countByStyle('تفكير سطحي') },
-                      { label: '🔴 نمط الخوف المعرفي', val: percentageByStyle('خوف معرفي'), color: 'bg-red-500', count: countByStyle('خوف معرفي') }
+                      { label: 'نمط التفكير النقدي', val: percentageByStyle('تفكير نقدي'), color: 'bg-emerald-500', count: countByStyle('تفكير نقدي') },
+                      { label: 'نمط الفضول المعرفي', val: percentageByStyle('فضول معرفي'), color: 'bg-blue-500', count: countByStyle('فضول معرفي') },
+                      { label: 'نمط التفكير السطحي', val: percentageByStyle('تفكير سطحي'), color: 'bg-amber-400', count: countByStyle('تفكير سطحي') },
+                      { label: 'نمط الخوف المعرفي', val: percentageByStyle('خوف معرفي'), color: 'bg-red-500', count: countByStyle('خوف معرفي') }
                     ].map(bar => (
                       <div key={bar.label} className="space-y-1">
                         <div className="flex justify-between text-xs font-bold text-slate-600">
-                          <span>{bar.label}</span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${bar.color}`} />
+                            <span>{bar.label}</span>
+                          </span>
                           <div>
-                            <span className="font-mono text-slate-800">{bar.count} دفتراً </span>
-                            <span className="text-slate-400 font-mono">({bar.val}%)</span>
+                            <span className="font-mono text-slate-800 tabular-nums">{bar.count} دفتراً </span>
+                            <span className="text-slate-400 font-mono tabular-nums">({bar.val}%)</span>
                           </div>
                         </div>
                         <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
@@ -6121,7 +6414,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   
                   {/* Summary Metric Badge */}
                   <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-black px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 shrink-0">
-                    ✨ إحصائيات تقابلية ديناميكية
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>إحصائيات تقابلية ديناميكية</span>
                   </span>
                 </div>
 
@@ -6131,7 +6425,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <div className="lg:col-span-8 space-y-4">
                     <div className="bg-slate-50/50 border border-slate-100 p-3.5 sm:p-5 rounded-2xl">
                       <h4 className="text-xs font-black text-slate-700 mb-3 sm:mb-4 flex items-center gap-1.5">
-                        📈 المخطط المقارن العام للأقسام التعليمية (%)
+                        <TrendingUp className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>المخطط المقارن العام للأقسام التعليمية (%)</span>
                       </h4>
                       
                       <div className="h-60 sm:h-72 w-full">
@@ -6155,10 +6450,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               name: sess.title.length > 15 ? `${sess.title.slice(0, 15)}...` : sess.title,
                               fullName: sess.title,
                               levelStream: `${sess.level} - ${sess.stream}`,
-                              'الفضول المعرفي 🔵': pctStyle('فضول معرفي'),
-                              'التسطيح الفكري 🟡': pctStyle('تفكير سطحي'),
-                              'التفكير النقدي 🟢': pctStyle('تفكير نقدي'),
-                              'الخوف المعرفي 🔴': pctStyle('خوف معرفي'),
+                              'الفضول المعرفي': pctStyle('فضول معرفي'),
+                              'التسطيح الفكري': pctStyle('تفكير سطحي'),
+                              'التفكير النقدي': pctStyle('تفكير نقدي'),
+                              'الخوف المعرفي': pctStyle('خوف معرفي'),
                               totalStudents: total
                             };
                           });
@@ -6200,19 +6495,22 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                       return (
                                         <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl p-4 shadow-xl text-right text-xs space-y-2 min-w-[220px]" dir="rtl">
                                           <p className="font-extrabold text-white text-sm border-b border-slate-800 pb-1.5 flex justify-between">
-                                            <span>🏫 {data.fullName}</span>
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <Building className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                              <span>{data.fullName}</span>
+                                            </span>
                                             <span className="text-slate-400 font-mono text-[10px]">({data.levelStream})</span>
                                           </p>
                                           <div className="space-y-1 mt-1 font-semibold">
                                             {payload.map((p: any) => (
                                               <p key={p.name} className="flex justify-between items-center gap-4 text-slate-300">
                                                 <span>{p.name}:</span>
-                                                <span className="font-mono font-bold" style={{ color: p.color }}>{p.value}%</span>
+                                                <span className="font-mono font-bold tabular-nums" style={{ color: p.color }}>{p.value}%</span>
                                               </p>
                                             ))}
                                           </div>
                                           <p className="text-[10px] text-slate-400 border-t border-slate-800 pt-1.5 font-mono">
-                                            عدد التلاميذ المشاركين: <span className="text-white font-bold">{data.totalStudents}</span>
+                                            عدد التلاميذ المشاركين: <span className="text-white font-bold tabular-nums">{data.totalStudents}</span>
                                           </p>
                                         </div>
                                       );
@@ -6227,10 +6525,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                   iconSize={8}
                                   wrapperStyle={{ fontSize: 11, fontWeight: 'bold' }}
                                 />
-                                <Bar dataKey="الفضول المعرفي 🔵" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={25} />
-                                <Bar dataKey="التسطيح الفكري 🟡" fill="#fbbf24" radius={[4, 4, 0, 0]} maxBarSize={25} />
-                                <Bar dataKey="التفكير النقدي 🟢" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={25} />
-                                <Bar dataKey="الخوف المعرفي 🔴" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={25} />
+                                <Bar dataKey="الفضول المعرفي" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={25} />
+                                <Bar dataKey="التسطيح الفكري" fill="#fbbf24" radius={[4, 4, 0, 0]} maxBarSize={25} />
+                                <Bar dataKey="التفكير النقدي" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={25} />
+                                <Bar dataKey="الخوف المعرفي" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={25} />
                               </BarChart>
                             </ResponsiveContainer>
                           );
@@ -6243,7 +6541,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <div className="lg:col-span-4 flex flex-col justify-between bg-indigo-950/5 border border-indigo-950/10 p-5 rounded-2xl relative overflow-hidden">
                     <div>
                       <h4 className="text-xs font-black text-indigo-950 mb-3 flex items-center gap-1.5">
-                        🎯 ميزان التفكير النشط في القسم الحالي
+                        <Compass className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>ميزان التفكير النشط في القسم الحالي</span>
                       </h4>
                       <p className="text-[11px] text-slate-500 leading-relaxed font-semibold mb-4">
                         يقارن هذا الميزان النسبة العامة لطاقة السؤال والمبادرة (الفضول الفلسفي) في مقابل الكسل الإدراكي والاستجابة السطحية (التسطيح الفكري) للفوج المختار.
@@ -6267,15 +6566,15 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           advice = 'يرجى تسجيل إجابات التلاميذ للبدء في تصفح الملاحظات التربوية الممنهجة.';
                           titleColor = 'text-slate-600';
                         } else if (engagementScore > shallowScore) {
-                          levelText = 'تفوّق طاقة البحث الفلسفي 🚀';
+                          levelText = 'تفوّق طاقة البحث الفلسفي';
                           advice = 'الصف يتمتع بجهوزية عالية للمفاهيم المجردة؛ ركّز على نصوص الإشكاليات وعوّد التلاميذ على بناء الحجاج الذاتي وخلخلة البداهات الفكرية.';
                           titleColor = 'text-emerald-700 font-bold';
                         } else if (engagementScore < shallowScore) {
-                          levelText = 'هيمنة التلقي السلبي والأجوبة الجاهزة ⚠️';
+                          levelText = 'هيمنة التلقي السلبي والأجوبة الجاهزة';
                           advice = 'يحتاج التلاميذ لممارسات إثارة الصدمة المعرفية (تناقض الذات) والمهمات البسيطة لكسر اليقين والبداهات الحياتية السريعة والمنسوخة.';
                           titleColor = 'text-amber-700 font-bold';
                         } else {
-                          levelText = 'حالة توازن واستقطاب متوسط ⚖️';
+                          levelText = 'حالة توازن واستقطاب متوسط';
                           advice = 'الفوج منشطر جزئياً؛ يوصى بتمكين العمل بالمجموعات الثنائية (قرين متشكك وقرين مبادر) لرفع منسوب المشاركة الفلسفية النشطة.';
                           titleColor = 'text-blue-700 font-bold';
                         }
@@ -6285,13 +6584,15 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             {/* Visual balance line */}
                             <div className="space-y-1.5">
                               <div className="flex justify-between text-[11px] font-bold text-slate-700">
-                                <span className="text-blue-600 flex items-center gap-1">
-                                  <span>🔵 فضول معرفي</span>
-                                  <span className="font-mono">({curPct}%)</span>
+                                <span className="text-blue-600 flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                                  <span>فضول معرفي</span>
+                                  <span className="font-mono tabular-nums">({curPct}%)</span>
                                 </span>
-                                <span className="text-amber-600 flex items-center gap-1">
-                                  <span>🟡 تفكير سطحي</span>
-                                  <span className="font-mono">({flatPct}%)</span>
+                                <span className="text-amber-600 flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                                  <span>تفكير سطحي</span>
+                                  <span className="font-mono tabular-nums">({flatPct}%)</span>
                                 </span>
                               </div>
                               <div className="h-3 w-full bg-slate-200 rounded-full flex overflow-hidden">
@@ -6318,7 +6619,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                             {/* Prompt helper tip */}
                             <div className="flex items-center gap-1.5 text-[10px] text-indigo-600 font-bold mt-2">
-                              <span>💡</span>
+                              <Lightbulb className="w-3.5 h-3.5 shrink-0" />
                               <span>اختر أي جلسة من القائمة العلوية لتحديث ميزان التفكير الخاص بها فوراً.</span>
                             </div>
                           </div>
@@ -6360,10 +6661,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       className="w-full sm:w-auto min-h-[44px] bg-white border border-slate-200 rounded-xl py-2 px-3 text-base sm:text-xs pr-4 pl-8 appearance-none font-bold text-slate-700"
                     >
                       <option value="الكل">جميع أنماط التفكير</option>
-                      <option value="تفكير نقدي">🟢 تفكير نقدي</option>
-                      <option value="فضول معرفي">🔵 فضول معرفي</option>
-                      <option value="تفكير سطحي">🟡 تفكير سطحي</option>
-                      <option value="خوف معرفي">🔴 خوف معرفي</option>
+                      <option value="تفكير نقدي">تفكير نقدي</option>
+                      <option value="فضول معرفي">فضول معرفي</option>
+                      <option value="تفكير سطحي">تفكير سطحي</option>
+                      <option value="خوف معرفي">خوف معرفي</option>
                     </select>
                     <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5 pointer-events-none" />
                   </div>
@@ -6381,7 +6682,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       title="لوحة تصنيف تفاعلية بالكامل مع دعم إيماءات السحب والإفلات"
                     >
                       <LayoutGrid className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                      <span className="truncate">التصنيف 🧠</span>
+                      <span className="truncate">التصنيف</span>
                     </button>
                     <button
                       type="button"
@@ -6429,10 +6730,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Explanatory subtitle */}
                   <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-blue-50/50 border border-blue-100 p-4 rounded-2xl animate-fade-in">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-lg">✨</span>
+                      <SlidersHorizontal className="w-4 h-4 text-sky-600 shrink-0" />
                       <div>
-                        <h4 className="text-xs sm:text-sm font-black text-blue-900">لوحة التصنيف البيداغوجي وتوجيه التلاميذ باللمس والإيماءات 🖐️⚙️</h4>
-                        <p className="text-[10px] sm:text-xs text-blue-700 font-medium leading-relaxed mt-0.5 animate-pulse">
+                        <h4 className="text-xs sm:text-sm font-black text-blue-900">لوحة التصنيف البيداغوجي وتوجيه التلاميذ باللمس والإيماءات</h4>
+                        <p className="text-[10px] sm:text-xs text-blue-700 font-medium leading-relaxed mt-0.5">
                           اسحب بطاقة أي تلميذ وأَسقطها داخل عمود النمط الجديد لتكييف مستواه الفردي وتعديله فوراً في قواعد البيانات بشكل حي.
                         </p>
                       </div>
@@ -6442,11 +6743,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   {/* Columns Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 xl:items-start overflow-x-auto select-none min-h-[450px]">
                     {(() => {
-                      const columnsList: { id: ThinkingStyle; name: string; badge: string; desc: string; color: string; border: string; bg: string; dot: string; }[] = [
-                        { id: 'تفكير نقدي', name: 'تفكير نقدي', badge: '🟢', desc: 'يقظة معرفية متوازنة وبناء حجاجي سليم', color: 'bg-emerald-500', border: 'border-emerald-200', bg: 'bg-emerald-50/30 hover:bg-emerald-50/60', dot: 'bg-emerald-500' },
-                        { id: 'فضول معرفي', name: 'فضول معرفي', badge: '🔵', desc: 'شغف تساؤلي متوهج وتفكير مبادر', color: 'bg-blue-500', border: 'border-blue-200', bg: 'bg-blue-50/30 hover:bg-blue-50/60', dot: 'bg-blue-500' },
-                        { id: 'تفكير سطحي', name: 'تفكير سطحي', badge: '🟡', desc: 'تسرع في إطلاق الأحكام وتبني البداهات', color: 'bg-amber-500', border: 'border-amber-200', bg: 'bg-amber-50/30 hover:bg-amber-50/60', dot: 'bg-amber-500' },
-                        { id: 'خوف معرفي', name: 'خوف معرفي', badge: '🔴', desc: 'انغلاق عقلي متردد أو تهيب من الإشكاليات', color: 'bg-red-500', border: 'border-red-200', bg: 'bg-red-50/30 hover:bg-red-50/60', dot: 'bg-red-500' }
+                      const columnsList: { id: ThinkingStyle; name: string; desc: string; color: string; border: string; bg: string; dot: string; }[] = [
+                        { id: 'تفكير نقدي', name: 'تفكير نقدي', desc: 'يقظة معرفية متوازنة وبناء حجاجي سليم', color: 'bg-emerald-500', border: 'border-emerald-200', bg: 'bg-emerald-50/30 hover:bg-emerald-50/60', dot: 'bg-emerald-500' },
+                        { id: 'فضول معرفي', name: 'فضول معرفي', desc: 'شغف تساؤلي متوهج وتفكير مبادر', color: 'bg-blue-500', border: 'border-blue-200', bg: 'bg-blue-50/30 hover:bg-blue-50/60', dot: 'bg-blue-500' },
+                        { id: 'تفكير سطحي', name: 'تفكير سطحي', desc: 'تسرع في إطلاق الأحكام وتبني البداهات', color: 'bg-amber-500', border: 'border-amber-200', bg: 'bg-amber-50/30 hover:bg-amber-50/60', dot: 'bg-amber-500' },
+                        { id: 'خوف معرفي', name: 'خوف معرفي', desc: 'انغلاق عقلي متردد أو تهيب من الإشكاليات', color: 'bg-red-500', border: 'border-red-200', bg: 'bg-red-50/30 hover:bg-red-50/60', dot: 'bg-red-500' }
                       ];
 
                       return columnsList.map(group => {
@@ -6463,8 +6764,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           >
                             {/* Column title */}
                             <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-4">
-                              <div className="flex items-center gap-1.5 font-sans">
-                                <span className="text-sm shrink-0">{group.badge}</span>
+                              <div className="flex items-center gap-2 font-sans">
+                                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${group.dot}`} />
                                 <div className="text-right">
                                   <h4 className="text-xs sm:text-xs font-black text-slate-800 leading-none">{group.name}</h4>
                                   <span className="text-[9px] text-slate-400 font-bold block mt-1">{group.desc}</span>
@@ -6527,8 +6828,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                           <h5 className="font-extrabold text-slate-800 text-xs text-right leading-relaxed flex items-center gap-1">
                                             {sub.studentName}
                                           </h5>
-                                          <span className="text-[8.5px] text-slate-400 block mt-1 font-mono">
-                                            📊 أعلى مؤشر: {highestIndex}%
+                                          <span className="text-[8.5px] text-slate-400 inline-flex items-center gap-1 mt-1 font-mono tabular-nums">
+                                            <BarChart3 className="w-2.5 h-2.5 text-slate-400" />
+                                            <span>أعلى مؤشر: {highestIndex}%</span>
                                           </span>
                                         </div>
                                         <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${group.dot}`} />
@@ -6555,10 +6857,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                             className="bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 rounded-lg py-1 px-1.5 text-[9px] font-bold cursor-pointer outline-none appearance-none pr-3"
                                           >
                                             <option disabled value="">تصنيف يدوي...</option>
-                                            <option value="تفكير نقدي">🟢 تفكير نقدي</option>
-                                            <option value="فضول معرفي">🔵 فضول معرفي</option>
-                                            <option value="تفكير سطحي">🟡 تفكير سطحي</option>
-                                            <option value="خوف معرفي">🔴 خوف معرفي</option>
+                                            <option value="تفكير نقدي">تفكير نقدي</option>
+                                            <option value="فضول معرفي">فضول معرفي</option>
+                                            <option value="تفكير سطحي">تفكير سطحي</option>
+                                            <option value="خوف معرفي">خوف معرفي</option>
                                           </select>
                                         </div>
                                       </div>
@@ -6567,7 +6869,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 })
                               ) : (
                                 <div className="border border-slate-100 bg-slate-50/30 rounded-2xl p-4 text-center text-[10px] text-slate-400 italic py-16 flex flex-col items-center justify-center gap-2">
-                                  <span>📭</span>
+                                  <Inbox className="w-5 h-5 text-slate-300" />
                                   <span>لا يوجد تلاميذ مصنفون هنا حالياً.</span>
                                 </div>
                               )}
@@ -6607,14 +6909,15 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             <div className="flex justify-between items-start gap-2">
                               <div>
                                 <h4 className="font-extrabold text-slate-900 text-sm leading-tight">{sub.studentName}</h4>
-                                <span className="text-[10px] text-slate-400 font-mono block mt-1.5 font-bold">
-                                  📅 {new Date(sub.submittedAt).toLocaleDateString('ar-MA', {
+                                <span className="text-[10px] text-slate-400 font-mono inline-flex items-center gap-1 mt-1.5 font-bold tabular-nums">
+                                  <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span>{new Date(sub.submittedAt).toLocaleDateString('ar-MA', {
                                     year: 'numeric',
                                     month: 'short',
                                     day: 'numeric',
                                     hour: '2-digit',
                                     minute: '2-digit'
-                                  })}
+                                  })}</span>
                                 </span>
                               </div>
                               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${classStyle.color}`}>
@@ -6628,7 +6931,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 text-[11px]">
                               <div>
                                 <span className="text-slate-400 block font-bold text-[9px] mb-0.5">أعلى مؤشر رقمي:</span>
-                                <span className="font-mono font-bold text-slate-800 bg-slate-200 px-1.5 py-0.5 rounded text-xs">{highestIndex}%</span>
+                                <span className="font-mono font-bold text-slate-800 bg-slate-200 px-1.5 py-0.5 rounded text-xs tabular-nums">{highestIndex}%</span>
                               </div>
                               <div>
                                 <span className="text-slate-400 block font-bold text-[9px] mb-0.5">تفصيل التقييم:</span>
@@ -6639,7 +6942,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             </div>
 
                             <div className="bg-slate-50/60 p-3 rounded-2xl border border-slate-200 text-[11px] leading-relaxed">
-                              <span className="text-slate-500 block font-extrabold text-[9px] mb-1">📝 الملاحظة التربوية:</span>
+                              <span className="text-slate-500 inline-flex items-center gap-1 font-extrabold text-[9px] mb-1">
+                                <FileEdit className="w-3 h-3 text-slate-400 shrink-0" />
+                                <span>الملاحظة التربوية:</span>
+                              </span>
                               <p className="text-slate-700 font-medium">
                                 {sub.teacherNotes ? sub.teacherNotes : <span className="italic text-slate-400">لا توجد ملاحظات حالياً لهذا التلميذ.</span>}
                               </p>
@@ -6779,14 +7085,15 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div className="flex justify-between items-start gap-2">
                           <div>
                             <h4 className="font-extrabold text-slate-900 text-sm">{sub.studentName}</h4>
-                            <span className="text-[10px] text-slate-400 font-mono block mt-1">
-                              📅 {new Date(sub.submittedAt).toLocaleDateString('ar-MA', {
+                            <span className="text-[10px] text-slate-400 font-mono inline-flex items-center gap-1 mt-1 tabular-nums">
+                              <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{new Date(sub.submittedAt).toLocaleDateString('ar-MA', {
                                 year: 'numeric',
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit'
-                              })}
+                              })}</span>
                             </span>
                           </div>
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${classStyle.color}`}>
@@ -6802,7 +7109,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div className="grid grid-cols-2 gap-3 pt-2 text-[11px] border-t border-slate-100">
                           <div>
                             <span className="text-slate-400 block font-bold text-[9px] mb-0.5">أعلى مؤشر رقمي:</span>
-                            <span className="font-mono font-bold text-slate-800 bg-slate-200 px-1.5 py-0.5 rounded text-xs">{highestIndex}%</span>
+                            <span className="font-mono font-bold text-slate-800 bg-slate-200 px-1.5 py-0.5 rounded text-xs tabular-nums">{highestIndex}%</span>
                           </div>
                           <div>
                             <span className="text-slate-400 block font-bold text-[9px] mb-0.5">حالة التقييم:</span>
@@ -6814,7 +7121,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                         {/* Private Notes Preview if visible */}
                         <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-200/50 text-[11px]">
-                          <span className="text-slate-500 block font-bold text-[9px] mb-1">📝 ملاحظات الأستاذ المخصصة:</span>
+                          <span className="text-slate-500 inline-flex items-center gap-1 font-bold text-[9px] mb-1">
+                            <FileEdit className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>ملاحظات الأستاذ المخصصة:</span>
+                          </span>
                           <p className="text-slate-700 font-medium leading-relaxed">
                             {sub.teacherNotes ? sub.teacherNotes : <span className="italic text-slate-400">لا توجد ملاحظات حالياً لهذا التلميذ.</span>}
                           </p>
@@ -6850,19 +7160,23 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         return (
                           <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-[24px] p-4 sm:p-6 text-right font-sans flex flex-col sm:flex-row items-start gap-4">
                             <div className="p-3 bg-amber-100 text-amber-700 rounded-xl shrink-0">
-                              <AlertCircle className="w-6 h-6 animate-pulse" />
+                              <AlertCircle className="w-6 h-6" />
                             </div>
                             <div className="space-y-1 flex-1">
-                              <h4 className="font-black text-sm">الوضع التشخيصي المراقب قيد الخمول 🔒</h4>
+                              <h4 className="font-black text-sm flex items-center gap-1.5">
+                                <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                                <span>الوضع التشخيصي المراقب قيد الخمول</span>
+                              </h4>
                               <p className="text-xs text-slate-500 leading-relaxed">
                                 لست قادراً على مراقبة الطلاب بشكل حي وتوليد سجلات النزاهة وحركات المتصفح لأن "الوضع المراقب" معطل لهذه الجلسة الفعالة.
                               </p>
                               <button
                                 type="button"
                                 onClick={() => handleToggleSupervisedMode(selectedSessionId)}
-                                className="mt-3 min-h-[42px] py-2 px-4 bg-amber-600 hover:bg-amber-700 text-white font-black text-[11px] rounded-xl shadow-sm transition active:scale-95 cursor-pointer w-full sm:w-auto"
+                                className="mt-3 min-h-[42px] py-2 px-4 bg-amber-600 hover:bg-amber-700 text-white font-black text-[11px] rounded-xl shadow-sm transition active:scale-95 cursor-pointer w-full sm:w-auto inline-flex items-center justify-center gap-1.5"
                               >
-                                تفعيل رصد المخالفات والوضع التشخيصي المراقب الآن 🛡️
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                                <span>تفعيل رصد المخالفات والوضع التشخيصي المراقب الآن</span>
                               </button>
                             </div>
                           </div>
@@ -6880,16 +7194,20 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               <Lock className="w-6 h-6 shrink-0" />
                             </div>
                             <div className="space-y-1.5 flex-1">
-                              <h4 className="font-black text-sm text-red-700">هذه الجلسة مجمدة ومغلقة حالياً ❄️</h4>
+                              <h4 className="font-black text-sm text-red-700 flex items-center gap-1.5">
+                                <Snowflake className="w-4 h-4 text-red-600 shrink-0" />
+                                <span>هذه الجلسة مجمدة ومغلقة حالياً</span>
+                              </h4>
                               <p className="text-xs text-slate-500 leading-relaxed">
                                 تم تجميد الرابط والصفحة التشخيصية لمنع تلاميذ المادة من إرسال أي استمارات أو إجابات فلسفية جديدة بالكامل بعد انتهاء الحصة أو النشاط.
                               </p>
                               <button
                                 type="button"
                                 onClick={() => handleToggleFreezeSession(selectedSessionId)}
-                                className="mt-3 min-h-[42px] py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-xl shadow-sm transition active:scale-95 cursor-pointer w-full sm:w-auto"
+                                className="mt-3 min-h-[42px] py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-xl shadow-sm transition active:scale-95 cursor-pointer w-full sm:w-auto inline-flex items-center justify-center gap-1.5"
                               >
-                                إلغاء تجميد الجلسة والسماح بالردود مجدداً 🔥
+                                <Flame className="w-3.5 h-3.5" />
+                                <span>إلغاء تجميد الجلسة والسماح بالردود مجدداً</span>
                               </button>
                             </div>
                           </div>
@@ -6919,8 +7237,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 <Settings className="w-5 h-5 text-amber-500" />
                               </div>
                               <div>
-                                <h4 className="text-xs font-black text-slate-800">
-                                  مستوى الحساسية للإنذار الذكي بمؤشر النزاهة ⚠️
+                                <h4 className="text-xs font-black text-slate-800 inline-flex items-center gap-1.5">
+                                  <span>مستوى الحساسية للإنذار الذكي بمؤشر النزاهة</span>
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
                                 </h4>
                                 <p className="text-[10px] text-slate-400 mt-0.5">
                                   سيتم إخطارك فوراً وبصوت تنبيه مخصص في حال تراجع مؤشر الأمان لأي تلميذ عن هذا الحد المالي.
@@ -6942,7 +7261,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 }}
                                 className="w-full sm:w-48 accent-amber-500 h-1 bg-slate-200 rounded-lg cursor-pointer"
                               />
-                              <span className="font-mono font-black text-slate-800 border px-2.5 py-1 rounded-xl bg-white text-xs shrink-0 select-none">
+                              <span className="font-mono font-black text-slate-800 border px-2.5 py-1 rounded-xl bg-white text-xs shrink-0 select-none tabular-nums">
                                 {trustAlertThreshold}%
                               </span>
                             </div>
@@ -6952,28 +7271,29 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           {lowTrustStudents.length > 0 && (
                             <div className="bg-red-50/90 border-2 border-red-200 text-red-950 rounded-[24px] p-5 text-right font-sans flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg shadow-red-500/10">
                               <div className="flex items-start gap-3.5">
-                                <div className="p-3 bg-red-100 text-red-600 rounded-2xl animate-pulse">
+                                <div className="p-3 bg-red-100 text-red-600 rounded-2xl">
                                   <ShieldAlert className="w-6 h-6 text-red-600" />
                                 </div>
                                 <div className="space-y-1">
                                   <h4 className="font-black text-sm text-red-800 flex items-center gap-2">
-                                    <span>⚠️ تنبيه مستعجل: انخفاض حاد في مؤشر الثقة والنزاهة الرقمي!</span>
+                                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                                    <span>تنبيه مستعجل: انخفاض حاد في مؤشر الثقة والنزاهة الرقمي!</span>
                                   </h4>
                                   <p className="text-xs text-red-700/95 leading-relaxed">
                                     تراجع مؤشر الثقة العام للتلاميذ المدرجين أدناه تحت عتبة الحماية الموثقة (<span className="font-bold underline">{trustAlertThreshold}%</span>) بفعل تكرار المخالفات:
                                   </p>
                                   <div className="flex flex-wrap gap-2 mt-2">
                                     {lowTrustStudents.map((stud: any) => (
-                                      <span key={stud.studentName} className="inline-flex items-center gap-1.5 bg-white border border-red-200 px-3 py-1 rounded-xl text-xs font-black text-red-800 shadow-sm hover:bg-slate-50 transition">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>
+                                      <span key={stud.studentName} className="inline-flex items-center gap-1.5 bg-white border border-red-200 px-3 py-1 rounded-xl text-xs font-black text-red-800 shadow-sm hover:bg-slate-50 transition tabular-nums">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>
                                         {stud.studentName} ({stud.reliabilityIndex !== undefined ? stud.reliabilityIndex : 100}%)
                                         <button 
                                           type="button" 
                                           onClick={() => setDismissedTrustAlerts(prev => [...prev, stud.studentName])}
-                                          className="mr-1 py-0.5 px-1 text-[9px] text-slate-400 hover:text-red-600 font-extrabold cursor-pointer"
+                                          className="mr-1 py-0.5 px-1 text-[9px] text-slate-400 hover:text-red-600 font-extrabold cursor-pointer inline-flex items-center"
                                           title="كتم التنبيه لتلميذ"
                                         >
-                                          ✕
+                                          <X className="w-3 h-3" />
                                         </button>
                                       </span>
                                     ))}
@@ -6984,9 +7304,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 <button
                                   type="button"
                                   onClick={() => setDismissedTrustAlerts(prev => [...prev, ...lowTrustStudents.map((s: any) => s.studentName)])}
-                                  className="w-full md:w-auto py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl shadow-md shadow-red-600/15 transition active:scale-95 cursor-pointer text-center"
+                                  className="w-full md:w-auto py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl shadow-md shadow-red-600/15 transition active:scale-95 cursor-pointer text-center inline-flex items-center justify-center gap-1.5"
                                 >
-                                  كتم التنبيهات وإخفاؤها مؤقتاً 🔇
+                                  <VolumeX className="w-3.5 h-3.5" />
+                                  <span>كتم التنبيهات وإخفاؤها مؤقتاً</span>
                                 </button>
                               </div>
                             </div>
@@ -7000,7 +7321,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       {/* Connected Counter */}
                       <div className="bg-white border border-slate-200 p-5 rounded-[24px] shadow-sm flex items-center gap-4">
                         <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-                          <Users className="w-6 h-6 animate-pulse" />
+                          <Users className="w-6 h-6" />
                         </div>
                         <div>
                           <span className="text-xs text-slate-400 block font-black">الطلاب المتصلون حالياً بالبث</span>
@@ -7050,9 +7371,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               مخطط بياني ديناميكي يرصد نبض نزاهة الفصل وحجم السلوكيات المخمّنة في الوقت الفعلي.
                             </p>
                           </div>
-                          <span className="text-[9px] font-black font-semibold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                            بث بياني حي نشط 🟢
+                          <span className="text-[9px] font-black font-semibold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            <span>بث بياني حي نشط</span>
                           </span>
                         </div>
 
@@ -7060,7 +7381,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           
                           {/* Chart 1: Average Trust Index Evolution */}
                           <div className="space-y-2">
-                            <span className="text-xs font-black text-slate-700 block">📉 متوسط مؤشر النزاهة العام للتلاميذ (%) في الزمن</span>
+                            <span className="text-xs font-black text-slate-700 inline-flex items-center gap-1.5">
+                              <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>متوسط مؤشر النزاهة العام للتلاميذ (%) في الزمن</span>
+                            </span>
                             <div className="h-56 w-full">
                               <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart data={proctoringHistory} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
@@ -7086,7 +7410,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                           {/* Chart 2: Total Violations Accumulation */}
                           <div className="space-y-2">
-                            <span className="text-xs font-black text-slate-700 block">🚨 تراكم إجمالي السلوكيات والمخالفات المرصودة بالفصل</span>
+                            <span className="text-xs font-black text-slate-700 inline-flex items-center gap-1.5">
+                              <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              <span>تراكم إجمالي السلوكيات والمخالفات المرصودة بالفصل</span>
+                            </span>
                             <div className="h-56 w-full">
                               <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={proctoringHistory} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
@@ -7134,7 +7461,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               let statusBadge = "bg-slate-100 text-slate-600 border-slate-200";
                               const statusStr = stud.status;
                               if (statusStr === 'غادر الصفحة' || statusStr?.includes('غادر')) {
-                                statusBadge = "bg-orange-100 text-orange-800 border-orange-200 animate-pulse";
+                                statusBadge = "bg-orange-100 text-orange-800 border-orange-200";
                               } else if (statusStr === 'يجيب حالياً') {
                                 statusBadge = "bg-emerald-100 text-emerald-800 border-emerald-200";
                               } else if (statusStr === 'متوقف مؤقتاً') {
@@ -7148,7 +7475,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               let scoreBar = "bg-emerald-500";
                               if (score < 40) {
                                 scoreBadge = "text-red-700 bg-red-50 border-red-100";
-                                scoreBar = "bg-red-500 animate-pulse";
+                                scoreBar = "bg-red-500";
                               } else if (score < 80) {
                                 scoreBadge = "text-amber-700 bg-amber-50 border-amber-100";
                                 scoreBar = "bg-amber-500";
@@ -7217,7 +7544,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                   let statusBadge = "bg-slate-100 text-slate-600 border-slate-200";
                                   const statusStr = stud.status;
                                   if (statusStr === 'غادر الصفحة' || statusStr?.includes('غادر')) {
-                                    statusBadge = "bg-orange-100 text-orange-800 border-orange-200 animate-pulse";
+                                    statusBadge = "bg-orange-100 text-orange-800 border-orange-200";
                                   } else if (statusStr === 'يجيب حالياً') {
                                     statusBadge = "bg-emerald-100 text-emerald-800 border-emerald-200";
                                   } else if (statusStr === 'متوقف مؤقتاً') {
@@ -7231,7 +7558,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                   let scoreBar = "bg-emerald-500";
                                   if (score < 40) {
                                     scoreBadge = "text-red-700 bg-red-50 border-red-100";
-                                    scoreBar = "bg-red-500 animate-pulse";
+                                    scoreBar = "bg-red-500";
                                   } else if (score < 80) {
                                     scoreBadge = "text-amber-700 bg-amber-50 border-amber-100";
                                     scoreBar = "bg-amber-500";
@@ -7282,7 +7609,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div>
                           <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
                             <h4 className="font-extrabold text-sm flex items-center gap-2">
-                              <Bell className="w-4 h-4 text-amber-500 animate-pulse" />
+                              <Bell className="w-4 h-4 text-amber-500" />
                               النشاط والتهديدات الحية بالفصل (Live Log)
                             </h4>
                           </div>
@@ -7290,14 +7617,14 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <div className="space-y-4 max-h-[360px] overflow-y-auto pr-1">
                             {!liveProctoringData || !liveProctoringData.recentViolations || liveProctoringData.recentViolations.length === 0 ? (
                               <p className="text-[11px] text-slate-400 italic py-16 text-center">
-                                لم تحدث أي تجاوزات سلوكية في المتصفح بعد. النزاهة البيداغوجية مستقرة 🤝
+                                لم تحدث أي تجاوزات سلوكية في المتصفح بعد. النزاهة البيداغوجية مستقرة
                               </p>
                             ) : (
                               liveProctoringData.recentViolations.map((viol: any, idx: number) => {
                                 return (
                                   <div key={idx} className="bg-slate-950/40 border border-slate-800 p-2.5 rounded-xl space-y-1.5 text-right font-sans text-[11px]">
                                     <div className="flex justify-between items-center">
-                                      <span className="font-mono text-slate-500 text-[9px]">
+                                      <span className="font-mono text-slate-500 text-[9px] tabular-nums">
                                         {new Date(viol.time).toLocaleTimeString('ar-EG')}
                                       </span>
                                       <span className="font-black text-yellow-400">{viol.studentName}</span>
@@ -7306,8 +7633,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                       {viol.type}
                                     </p>
                                     {viol.duration !== undefined && viol.duration > 0 && (
-                                      <span className="text-[9px] text-slate-400 block mt-0.5 font-semibold">
-                                        ⏱️ مدة الانقطاع: {viol.duration} ثوانٍ
+                                      <span className="text-[9px] text-slate-400 inline-flex items-center gap-1 mt-0.5 font-semibold tabular-nums">
+                                        <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                        <span>مدة الانقطاع: {viol.duration} ثوانٍ</span>
                                       </span>
                                     )}
                                   </div>
@@ -7545,8 +7873,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               : 'bg-slate-950 hover:bg-slate-900 border-slate-800 text-amber-400 hover:text-white'
                           }`}
                         >
-                          <Tv className="w-4 h-4 animate-pulse text-amber-400 shrink-0" />
-                          <span>وضع التقديم بالشاشة الكاملة 📺</span>
+                          <Tv className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>وضع التقديم بالشاشة الكاملة</span>
                         </button>
                       </div>
                     </div>
@@ -7683,9 +8011,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <button
                           type="button"
                           onClick={() => setUseSimulationData(true)}
-                          className="min-h-[44px] py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                          className="min-h-[44px] py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer inline-flex items-center justify-center gap-1.5"
                         >
-                          🟢 تشغيل محاكاة تجريبية حيوية
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>تشغيل محاكاة تجريبية حيوية</span>
                         </button>
                         <button
                           type="button"
@@ -7756,12 +8085,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div className="bg-white p-6 rounded-[28px] border border-slate-200 shadow-sm flex flex-col justify-between md:col-span-1">
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
-                              <span className="text-xs text-slate-400 font-bold block">معامل الارتباط (التفكير 🔁 الفضول)</span>
+                              <span className="text-xs text-slate-400 font-bold block">معامل الارتباط (التفكير × الفضول)</span>
                               <span className="text-sm font-black text-slate-800 mt-1 block">
                                 {correlationLabel}
                               </span>
                             </div>
-                            <div className="p-2.5 bg-violet-50 rounded-xl text-violet-600 font-mono font-bold text-xs shrink-0 select-none">
+                            <div className="p-2.5 bg-violet-50 rounded-xl text-violet-600 font-mono font-bold text-xs shrink-0 select-none tabular-nums">
                               r = {correlationStrength ? correlationStrength.toFixed(2) : '0.0'}
                             </div>
                           </div>
@@ -7776,7 +8105,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-4 sm:pb-5">
                           <div>
                             <h4 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
-                              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping shrink-0"></span>
+                              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full shrink-0"></span>
                               محور تتبع المنحنيات ومستويات التقدم المعرفي بالفصل الدراسي
                             </h4>
                             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed hidden sm:block">
@@ -7791,24 +8120,26 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               <button
                                 type="button"
                                 onClick={() => setAnalyticsGroupMode('daily')}
-                                className={`min-h-[36px] px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                                className={`min-h-[36px] px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                                   analyticsGroupMode === 'daily'
                                     ? 'bg-white text-slate-800 shadow-sm'
                                     : 'text-slate-500 hover:text-slate-700'
                                 }`}
                               >
-                                تجميع متوسطات التواريخ 📅
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span>تجميع متوسطات التواريخ</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setAnalyticsGroupMode('sequential')}
-                                className={`min-h-[36px] px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                                className={`min-h-[36px] px-3 py-1.5 font-bold rounded-lg transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                                   analyticsGroupMode === 'sequential'
                                     ? 'bg-white text-slate-800 shadow-sm'
                                     : 'text-slate-500 hover:text-slate-700'
                                 }`}
                               >
-                                تفصيل التلاميذ تتابعياً 📈
+                                <TrendingUp className="w-3.5 h-3.5" />
+                                <span>تفصيل التلاميذ تتابعياً</span>
                               </button>
                             </div>
 
@@ -7936,7 +8267,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <div className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] border border-slate-200 shadow-sm space-y-5 sm:space-y-6">
                         <div className="border-b border-slate-100 pb-4 sm:pb-5">
                           <h4 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-pulse shrink-0"></span>
+                            <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full shrink-0"></span>
                             تشخيص الأنماط الفكرية: توزيع الـخـمـسـة أبعاد المعرفية بالفصل الدراسي
                           </h4>
                           <p className="text-[11px] text-slate-400 mt-1 leading-relaxed hidden sm:block">
@@ -8010,7 +8341,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                               {/* Interactive indicators list and details (7/12 width on desktop) */}
                               <div className="col-span-1 lg:col-span-7 space-y-4">
-                                <h5 className="text-[12px] font-black text-slate-700 mb-3 text-right">💡 تحليل وتوصيف الأبعاد الخمسة في هذا الفصل الدراسي:</h5>
+                                <h5 className="text-[12px] font-black text-slate-700 mb-3 text-right flex items-center gap-1.5">
+                                  <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
+                                  <span>تحليل وتوصيف الأبعاد الخمسة في هذا الفصل الدراسي:</span>
+                                </h5>
                                 <div className="space-y-3">
                                   {pieData.map((dimension, idx) => {
                                     // Custom badge helper for raw scores
@@ -8068,15 +8402,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <div className="border-b border-slate-100 pb-4 sm:pb-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                           <div>
                             <h4 className="text-sm font-extrabold text-slate-800 flex items-center gap-2 text-right" dir="rtl">
-                              <span className="w-2.5 h-2.5 bg-violet-600 rounded-full animate-pulse shrink-0"></span>
+                              <span className="w-2.5 h-2.5 bg-violet-600 rounded-full shrink-0"></span>
                               رسم بياني متقدم: الكفاءة المعرفية وتوزيع الطلاب عبر الأبعاد التشخيصية الخمسة
                             </h4>
                             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed text-right hidden sm:block" dir="rtl">
                               رؤية تحليلية مزدوجة للملف المعرفي الجمعي لطلاب المادة وتوزيعهم الإحصائي ضمن الأنماط المعرفية الخمسة.
                             </p>
                           </div>
-                          <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-100 px-3 py-1 rounded-xl shrink-0">
-                            تفصيل خماسي الأبعاد 📊
+                          <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-100 px-3 py-1 rounded-xl shrink-0 inline-flex items-center gap-1.5">
+                            <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+                            <span>تفصيل خماسي الأبعاد</span>
                           </span>
                         </div>
 
@@ -8133,7 +8468,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               {/* Left: Radar Chart representing Group average Profile */}
                               <div className="space-y-3 bg-slate-50/50 border border-slate-200 p-4 sm:p-5 rounded-2xl">
                                 <div className="text-right" dir="rtl">
-                                  <h5 className="text-xs font-black text-slate-700">🧭 بصمة الوعي المعرفي الجمعي (Radar Index)</h5>
+                                  <h5 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                                    <Compass className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                    <span>بصمة الوعي المعرفي الجمعي (Radar Index)</span>
+                                  </h5>
                                   <p className="text-[10px] text-slate-400 mt-0.5 hidden sm:block">يمثل هذا المخطط المتوسط العام للأداء والتمثلات المعرفية للتلاميذ في الفصل.</p>
                                 </div>
                                 <div className="h-56 sm:h-64 w-full flex items-center justify-center relative">
@@ -8180,7 +8518,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               {/* Right: Stacked Bar Chart representing Student Distribution */}
                               <div className="space-y-3 bg-slate-50/50 border border-slate-200 p-4 sm:p-5 rounded-2xl">
                                 <div className="text-right" dir="rtl">
-                                  <h5 className="text-xs font-black text-slate-700">📊 توزيع أعداد التلاميذ حسب مستويات التمكن</h5>
+                                  <h5 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                                    <BarChart3 className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                    <span>توزيع أعداد التلاميذ حسب مستويات التمكن</span>
+                                  </h5>
                                   <p className="text-[10px] text-slate-400 mt-0.5 hidden sm:block">يوضح فئات ومجموعات الطلاب وعدد المتمكنين في كل محور من أصل مجموع التلاميذ.</p>
                                 </div>
                                 <div className="h-56 sm:h-64 w-full" dir="ltr">
@@ -8235,8 +8576,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             {/* Archetype 1 */}
                             <div className="bg-emerald-50/50 hover:bg-emerald-50 p-2.5 rounded-xl border border-emerald-100/60 transition">
                               <p className="font-bold text-emerald-800 flex items-center gap-1.5">
-                                <span>🏆 المتفلسف النشط</span>
-                                <span className="font-mono text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-black">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span>المتفلسف النشط</span>
+                                </span>
+                                <span className="font-mono text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-black tabular-nums">
                                   {baseSubmissions.filter(s => (s.analysis?.metrics?.criticalThinking || 0) >= 70 && (s.analysis?.metrics?.cognitiveCuriosity || 0) >= 70).length} تلاميذ
                                 </span>
                               </p>
@@ -8246,8 +8590,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             {/* Archetype 2 */}
                             <div className="bg-blue-50/50 hover:bg-blue-50 p-2.5 rounded-xl border border-blue-100/60 transition">
                               <p className="font-bold text-blue-800 flex items-center gap-1.5">
-                                <span>🔍 الباحث المندفع</span>
-                                <span className="font-mono text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-black">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Search className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                  <span>الباحث المندفع</span>
+                                </span>
+                                <span className="font-mono text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-black tabular-nums">
                                   {baseSubmissions.filter(s => (s.analysis?.metrics?.criticalThinking || 0) < 70 && (s.analysis?.metrics?.cognitiveCuriosity || 0) >= 70).length} تلاميذ
                                 </span>
                               </p>
@@ -8257,8 +8604,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             {/* Archetype 3 */}
                             <div className="bg-amber-50/50 hover:bg-amber-50 p-2.5 rounded-xl border border-amber-100/60 transition">
                               <p className="font-bold text-amber-800 flex items-center gap-1.5">
-                                <span>⚖️ الناقد الحذر</span>
-                                <span className="font-mono text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-black">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Scale className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                  <span>الناقد الحذر</span>
+                                </span>
+                                <span className="font-mono text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-black tabular-nums">
                                   {baseSubmissions.filter(s => (s.analysis?.metrics?.criticalThinking || 0) >= 70 && (s.analysis?.metrics?.cognitiveCuriosity || 0) < 70).length} تلاميذ
                                 </span>
                               </p>
@@ -8268,8 +8618,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             {/* Archetype 4 */}
                             <div className="bg-red-50/50 hover:bg-red-50 p-2.5 rounded-xl border border-red-100/60 transition">
                               <p className="font-bold text-red-800 flex items-center gap-1.5">
-                                <span>🛑 التابع الخائف</span>
-                                <span className="font-mono text-[9px] bg-red-100 px-1.5 py-0.5 rounded-full font-black">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Ban className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                                  <span>التابع الخائف</span>
+                                </span>
+                                <span className="font-mono text-[9px] bg-red-100 px-1.5 py-0.5 rounded-full font-black tabular-nums">
                                   {baseSubmissions.filter(s => (s.analysis?.metrics?.criticalThinking || 0) < 70 && (s.analysis?.metrics?.cognitiveCuriosity || 0) < 70).length} تلاميذ
                                 </span>
                               </p>
@@ -8277,8 +8630,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             </div>
                           </div>
 
-                          <div className="text-[9px] bg-slate-50 p-2.5 rounded-xl text-slate-400 border border-slate-100 leading-normal">
-                            💡 نصيحة تربوية: وجه أسئلتك بالفصل الدراسي بطريقة تستثير الباحثين المندفعين منهجيا، وتطمئن التابعين الخائفين وجدانيا لدمج العقول جميعا.
+                          <div className="text-[9px] bg-slate-50 p-2.5 rounded-xl text-slate-500 border border-slate-100 leading-normal flex items-start gap-1.5">
+                            <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                            <span>نصيحة تربوية: وجه أسئلتك بالفصل الدراسي بطريقة تستثير الباحثين المندفعين منهجيا، وتطمئن التابعين الخائفين وجدانيا لدمج العقول جميعا.</span>
                           </div>
                         </div>
 
@@ -8287,7 +8641,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <div className="space-y-4">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
                               <div>
-                                <h4 className="text-xs font-extrabold text-slate-800">📊 جدول تمايز مستويات التلاميذ الفردية</h4>
+                                <h4 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                                  <BarChart3 className="w-4 h-4 text-sky-600 shrink-0" />
+                                  <span>جدول تمايز مستويات التلاميذ الفردية</span>
+                                </h4>
                                 <p className="text-[11px] text-slate-400 mt-0.5 hidden sm:block">ترتيب تنازلي لعلامات التلميذ لمراقبة مستويات التنمية البيداغوجية بالمجموعات.</p>
                               </div>
 
@@ -8397,7 +8754,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <header className="bg-slate-900 border-b border-slate-800 px-3 sm:px-6 py-3 sm:py-4 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3 sm:gap-4 sticky top-0 z-10 shadow-lg">
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="bg-amber-500 text-slate-950 p-2 sm:p-2.5 rounded-2xl animate-pulse flex items-center justify-center shrink-0">
+                            <div className="bg-amber-500 text-slate-950 p-2 sm:p-2.5 rounded-2xl flex items-center justify-center shrink-0">
                               <Presentation className="w-5 h-5" />
                             </div>
                             <div className="text-right min-w-0">
@@ -8421,35 +8778,38 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <button
                             type="button"
                             onClick={() => setPresentationTab('overview')}
-                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
                               presentationTab === 'overview'
                                 ? 'bg-amber-500 text-slate-950 font-black shadow-md'
                                 : 'text-slate-400 hover:text-slate-200'
                             }`}
                           >
-                            📊 اللوحة الرئيسية الجامعة
+                            <BarChart3 className="w-3.5 h-3.5" />
+                            <span>اللوحة الرئيسية الجامعة</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => setPresentationTab('trends')}
-                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
                               presentationTab === 'trends'
                                 ? 'bg-amber-500 text-slate-950 font-black shadow-md'
                                 : 'text-slate-400 hover:text-slate-200'
                             }`}
                           >
-                            📈 منحنيات التفكير والفضول
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            <span>منحنيات التفكير والفضول</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => setPresentationTab('axes')}
-                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+                            className={`min-h-[40px] py-2 px-3 sm:px-4 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
                               presentationTab === 'axes'
                                 ? 'bg-amber-500 text-slate-950 font-black shadow-md'
                                 : 'text-slate-400 hover:text-slate-200'
                             }`}
                           >
-                            🕸️ خريطة الأبعاد المعرفية الـ5
+                            <Compass className="w-3.5 h-3.5" />
+                            <span>خريطة الأبعاد المعرفية الـ5</span>
                           </button>
                         </div>
 
@@ -8475,8 +8835,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                             onClick={() => setShowPresentationMode(false)}
                             className="min-h-[44px] py-2 px-4 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl transition text-[11px] flex items-center gap-2 cursor-pointer shadow-md"
                           >
-                            <X className="w-3.5 h-3.5" />
-                            <span>إنهاء العرض 🚪</span>
+                            <LogOut className="w-3.5 h-3.5" />
+                            <span>إنهاء العرض</span>
                           </button>
                         </div>
                       </header>
@@ -8486,10 +8846,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         
                         {/* Top Banner indicating Privacy constraint */}
                         <div className="bg-slate-900 border border-slate-800 text-slate-300 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-                          <div className="flex items-center gap-2 text-right">
-                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                          <div className="flex items-center gap-2.5 text-right">
+                            <Lock className="w-4 h-4 text-emerald-400 shrink-0" />
                             <p className="font-semibold leading-relaxed">
-                              🔒 تم حجب المعطيات الفردية حمايةً <strong>للخصوصية التامة والنزاهة النفسية لكل تلميذ</strong> تفادياً لأي إحراج أثناء البث المباشر بالفصل.
+                              تم حجب المعطيات الفردية حمايةً <strong>للخصوصية التامة والنزاهة النفسية لكل تلميذ</strong> تفادياً لأي إحراج أثناء البث المباشر بالفصل.
                             </p>
                           </div>
                           <span className="bg-slate-950 font-mono text-amber-500/80 px-2.5 py-1 rounded-lg border border-slate-800 shrink-0 font-bold text-[10px]">
@@ -8532,7 +8892,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                     <span className="text-xs sm:text-sm text-slate-300 font-extrabold block mt-2">مستويات الشغف والفضول المعرفي</span>
                                   </div>
                                   <div className="p-3 sm:p-4 bg-blue-950/50 text-blue-400 border border-blue-900/40 rounded-3xl">
-                                    <Activity className="w-6 sm:w-8 h-6 sm:h-8 animate-pulse" />
+                                    <Activity className="w-6 sm:w-8 h-6 sm:h-8" />
                                   </div>
                                 </div>
                                 <div className="w-full bg-slate-900 h-3 rounded-full overflow-hidden border border-slate-800">
@@ -8606,20 +8966,22 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               <button
                                 type="button"
                                 onClick={() => setAnalyticsGroupMode('daily')}
-                                className={`px-3.5 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                                className={`px-3.5 py-1.5 font-bold rounded-lg transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                                   analyticsGroupMode === 'daily' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
                                 }`}
                               >
-                                تجميع متوسط التواريخ 📅
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span>تجميع متوسط التواريخ</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setAnalyticsGroupMode('sequential')}
-                                className={`px-3.5 py-1.5 font-bold rounded-lg transition-all cursor-pointer ${
+                                className={`px-3.5 py-1.5 font-bold rounded-lg transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                                   analyticsGroupMode === 'sequential' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
                                 }`}
                               >
-                                تتابع نقاط الاستجابة 📈
+                                <TrendingUp className="w-3.5 h-3.5" />
+                                <span>تتابع نقاط الاستجابة</span>
                               </button>
                             </div>
 
@@ -8700,7 +9062,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <div className="bg-slate-900 border border-slate-800 p-5 sm:p-8 rounded-[36px] animate-fade-in shadow-2xl space-y-8">
                             <div>
                               <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-                                <Sparkles className="w-4 sm:w-5 h-4 sm:h-5 text-indigo-400 animate-pulse" />
+                                <Sparkles className="w-4 sm:w-5 h-4 sm:h-5 text-indigo-400" />
                                 الثقل المعرفي خماسي الأبعاد للفصل الدراسي (البصمة الفكرية)
                               </h3>
                               <p className="text-[11px] sm:text-xs text-slate-400 mt-1 leading-relaxed">
@@ -8752,20 +9114,23 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                               {/* Descriptions details on right */}
                               <div className="col-span-1 lg:col-span-7 space-y-4">
-                                <h4 className="text-xs sm:text-sm font-extrabold text-white">📝 تحليل نضج الأبعاد المعرفية على المقاييس الجماعية للفئة:</h4>
+                                <h4 className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-1.5">
+                                  <FileEdit className="w-4 h-4 text-sky-400 shrink-0" />
+                                  <span>تحليل نضج الأبعاد المعرفية على المقاييس الجماعية للفئة:</span>
+                                </h4>
                                 
                                 <div className="space-y-3 text-[11px] sm:text-xs text-slate-300">
                                   {pieData.map((d, index) => {
                                     let levelDesc = '';
                                     let levelBg = '';
                                     if (d.rawScore >= 75) {
-                                      levelDesc = 'حالة مبهرة ومتأصلة 🌟';
+                                      levelDesc = 'حالة مبهرة ومتأصلة';
                                       levelBg = 'text-emerald-400 bg-emerald-950/40 border-emerald-900/30';
                                     } else if (d.rawScore >= 50) {
-                                      levelDesc = 'حالة مقبولة ونشطة 🚀';
+                                      levelDesc = 'حالة مقبولة ونشطة';
                                       levelBg = 'text-blue-400 bg-blue-950/40 border-blue-900/30';
                                     } else {
-                                      levelDesc = 'بحاجة لمواكبة ملحة ⚠️';
+                                      levelDesc = 'بحاجة لمواكبة ملحة';
                                       levelBg = 'text-rose-400 bg-rose-950/40 border-rose-900/40';
                                     }
 
@@ -8914,7 +9279,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 }`}
                               >
                                 <ShieldCheck className="w-3.5 h-3.5" />
-                                <span>الوضع المراقب: {sess.supervisedMode ? 'نشيط 🟢' : 'غير نشيط 🔒'}</span>
+                                <span>الوضع المراقب: {sess.supervisedMode ? 'نشيط' : 'غير نشيط'}</span>
                               </button>
 
                               <button
@@ -8927,7 +9292,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 }`}
                               >
                                 <Lock className="w-3.5 h-3.5 text-slate-600" />
-                                <span>تجميد الجلسة: {sess.isFrozen ? 'مجمدة ومغلقة ❄️' : 'نشطة ومفتوحة 🔥'}</span>
+                                <span>تجميد الجلسة: {sess.isFrozen ? 'مجمدة ومغلقة' : 'نشطة ومفتوحة'}</span>
                               </button>
 
                               <button
@@ -8935,8 +9300,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                                 onClick={() => openWeightsModal(sess)}
                                 className="w-full min-h-[44px] py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer mt-1"
                               >
-                                <Settings className="w-3.5 h-3.5 text-slate-500" />
-                                <span>تحديد أوزان الخطورة (مخصص) 🛠️</span>
+                                <Wrench className="w-3.5 h-3.5 text-slate-500" />
+                                <span>تحديد أوزان الخطورة (مخصص)</span>
                               </button>
 
                               <button
@@ -8968,7 +9333,35 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   setSelectedSessionId(newSess.sessionId);
                   setMonitoringSubTab('proctoring');
                   setTeacherActiveTab('monitoring');
-                  showToast('🚀 تم نقل الاستمارة وبث الجلسة التشخيصية الحية بنجاح!');
+                  showToast('تم نقل الاستمارة وبث الجلسة التشخيصية الحية بنجاح.');
+                }}
+              />
+            )}
+
+            {teacherActiveTab === 'notifications' && teacherSession && (
+              <TeacherNotificationsCenter
+                teacherSession={teacherSession}
+                sessions={sessions}
+                selectedSessionId={selectedSessionId}
+                initialNotificationId={deepLinkNotificationId}
+                liveIncomingNotification={livePedagogicalNotif}
+                onUnreadCountChange={(count) => setPedagogicalUnreadCount(count)}
+                onShowToast={showToast}
+                onOpenReport={(sid, studentRefId) => {
+                  const matched = sessions.find((s) => s.sessionId.toUpperCase() === sid.toUpperCase());
+                  if (matched) {
+                    setSelectedSessionId(matched.sessionId);
+                    setReportDrawerSessionId(matched.sessionId);
+                  } else {
+                    setSelectedSessionId(sid);
+                    setReportDrawerSessionId(sid);
+                  }
+                  if (studentRefId) {
+                    const matchedSub = submissions.find((sub) => sub.id === studentRefId);
+                    if (matchedSub) {
+                      openStudentDetails(matchedSub);
+                    }
+                  }
                 }}
               />
             )}
@@ -9118,20 +9511,32 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                       <h4 className="font-bold text-slate-800 text-sm">المؤشرات الأربعة المحللة بالأرقام</h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex justify-between items-center sm:block">
-                          <span className="text-xs text-slate-500 block">🟢 مؤشر التفكير النقدي</span>
-                          <span className="text-base font-black text-emerald-600 font-mono">{Math.round(selectedStudent.analysis.metrics.criticalThinking)}%</span>
+                          <span className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span>مؤشر التفكير النقدي</span>
+                          </span>
+                          <span className="text-base font-black text-emerald-600 font-mono tabular-nums sm:block sm:mt-1">{Math.round(selectedStudent.analysis.metrics.criticalThinking)}%</span>
                         </div>
                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex justify-between items-center sm:block">
-                          <span className="text-xs text-slate-500 block">🔵 مؤشر الفضول المعرفي</span>
-                          <span className="text-base font-black text-blue-600 font-mono">{Math.round(selectedStudent.analysis.metrics.cognitiveCuriosity)}%</span>
+                          <span className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500" />
+                            <span>مؤشر الفضول المعرفي</span>
+                          </span>
+                          <span className="text-base font-black text-blue-600 font-mono tabular-nums sm:block sm:mt-1">{Math.round(selectedStudent.analysis.metrics.cognitiveCuriosity)}%</span>
                         </div>
                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex justify-between items-center sm:block">
-                          <span className="text-xs text-slate-500 block">🔴 مؤشر الخوف المعرفي</span>
-                          <span className="text-base font-black text-red-600 font-mono">{Math.round(selectedStudent.analysis.metrics.cognitiveFear)}%</span>
+                          <span className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-red-500" />
+                            <span>مؤشر الخوف المعرفي</span>
+                          </span>
+                          <span className="text-base font-black text-red-600 font-mono tabular-nums sm:block sm:mt-1">{Math.round(selectedStudent.analysis.metrics.cognitiveFear)}%</span>
                         </div>
                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex justify-between items-center sm:block">
-                          <span className="text-xs text-slate-500 block">🟡 مؤشر التفكير السطحي</span>
-                          <span className="text-base font-black text-amber-600 font-mono">{Math.round(selectedStudent.analysis.metrics.shallowThinking)}%</span>
+                          <span className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-amber-400" />
+                            <span>مؤشر التفكير السطحي</span>
+                          </span>
+                          <span className="text-base font-black text-amber-600 font-mono tabular-nums sm:block sm:mt-1">{Math.round(selectedStudent.analysis.metrics.shallowThinking)}%</span>
                         </div>
                       </div>
                     </div>
@@ -9202,7 +9607,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     <div className="bg-indigo-50 border border-indigo-100 rounded-[24px] p-4 sm:p-6 space-y-4">
                       <div className="flex justify-between items-center flex-wrap gap-2 pb-2 border-b border-indigo-100/55">
                         <h4 className="font-black text-indigo-950 text-sm flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
+                          <Sparkles className="w-4 h-4 text-indigo-500" />
                           توصيات التوجيه وتحليل إجابات المقاييس الخمسة (Gemini):
                         </h4>
                         
@@ -9377,7 +9782,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                       {/* Axis 1 */}
                       <div className="space-y-1.5 bg-slate-50/50 p-4 rounded-xl border">
-                        <h5 className="font-bold text-slate-700 text-xs text-blue-800">🔹 المحور 1: التصور الأولي للفلسفة</h5>
+                        <h5 className="font-bold text-xs text-blue-800 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
+                          <span>المحور 1: التصور الأولي للفلسفة</span>
+                        </h5>
                         <p className="text-xs text-slate-500 font-bold">تساؤل: ما معنى الفلسفة بالنسبة لك؟</p>
                         <p className="text-sm text-slate-800 italic bg-white p-2.5 rounded-lg border leading-relaxed">
                           “{selectedStudent.answers.philosophyMeaning}”
@@ -9387,7 +9795,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                       {/* Axis 2 */}
                       <div className="space-y-1.5 bg-slate-50/50 p-4 rounded-xl border">
-                        <h5 className="font-bold text-slate-700 text-xs text-blue-800">🔹 المحور 2: البعد الوجداني</h5>
+                        <h5 className="font-bold text-xs text-blue-800 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
+                          <span>المحور 2: البعد الوجداني</span>
+                        </h5>
                         <p className="text-xs text-slate-500">عند سماع كلمة الفلسفة أشعر بـ: <span className="font-bold text-slate-800 text-sm bg-indigo-50 px-2 py-0.5 border rounded">{selectedStudent.answers.feelingWhenHearing}</span></p>
                         <p className="text-xs text-slate-500 font-bold">تعليل الشعور النفسي المألوف:</p>
                         <p className="text-sm text-slate-800 italic bg-white p-2.5 rounded-lg border leading-relaxed">
@@ -9397,7 +9808,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                       {/* Axis 3 */}
                       <div className="space-y-1.5 bg-slate-50/50 p-4 rounded-xl border">
-                        <h5 className="font-bold text-slate-700 text-xs text-blue-800">🔹 المحور 3: نمط التفكير</h5>
+                        <h5 className="font-bold text-xs text-blue-800 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
+                          <span>المحور 3: نمط التفكير</span>
+                        </h5>
                         <p className="text-xs text-slate-500">تفاعل الذهن مع سؤال كنه الحرية: <span className="font-bold text-slate-700">{selectedStudent.answers.reactionToFreedomQuestion}</span></p>
                         <p className="text-xs text-slate-500 font-bold">الأسئلة التي يراها التلميذ فلسفية صميمية:</p>
                         <div className="flex flex-wrap gap-1.5 pt-1">
@@ -9411,7 +9825,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                       {/* Axis 4 */}
                       <div className="space-y-1.5 bg-slate-50/50 p-4 rounded-xl border">
-                        <h5 className="font-bold text-slate-700 text-xs text-blue-800">🔹 المحور 4: القيمة المعرفية</h5>
+                        <h5 className="font-bold text-xs text-blue-800 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
+                          <span>المحور 4: القيمة المعرفية</span>
+                        </h5>
                         <p className="text-xs text-slate-500">معدل تقييم مساهمة الفلسفة وفهم الذات (1-5): <span className="font-mono text-slate-800 font-bold bg-white px-2 py-0.5 rounded border">{selectedStudent.answers.valueRating} / 5</span></p>
                         <p className="text-xs text-slate-500 font-bold">الغاية الأساسية من التفلسف بالنسبة للتلميذ:</p>
                         <p className="text-sm text-slate-800 bg-white p-2.5 rounded-lg border leading-relaxed">
@@ -9421,7 +9838,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
               {/* Axis 5 */}
               <div className="space-y-1.5 bg-slate-50/50 p-4 rounded-xl border">
-                <h5 className="font-bold text-slate-700 text-xs text-blue-800">🔹 المحور 5: الاستعداد الحجاجي والسلوكي</h5>
+                <h5 className="font-bold text-xs text-blue-800 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
+                  <span>المحور 5: الاستعداد الحجاجي والسلوكي</span>
+                </h5>
                 <p className="text-xs text-slate-500 font-bold">ردة الفعل عند مواجهة رأي مخالف: <span className="font-bold text-slate-700">{selectedStudent.answers.debateReaction}</span></p>
                 <p className="text-xs text-slate-500 font-bold">توقع التميز والاندماج في درس الفلسفة:</p>
                 <p className="text-sm text-slate-800 italic bg-white p-2.5 rounded-lg border leading-relaxed">
@@ -9485,7 +9905,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             
             {createdSession ? (
               <div className="space-y-5 text-center font-sans py-3" dir="rtl">
-                <div className="relative w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-full flex items-center justify-center mx-auto scale-110 mb-4 animate-bounce">
+                <div className="relative w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-full flex items-center justify-center mx-auto scale-110 mb-4">
                   <Check className="w-8 h-8 text-emerald-500" />
                 </div>
                 <h3 className="text-xl font-black text-emerald-600">
@@ -9571,7 +9991,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 </div>
 
                 <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-right text-xs text-slate-600 space-y-1.5 leading-relaxed">
-                  <p className="font-extrabold text-indigo-800">💡 تعليمات هامة للأستاذ:</p>
+                  <p className="font-extrabold text-indigo-800 flex items-center gap-1.5">
+                    <Lightbulb className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>تعليمات هامة للأستاذ:</span>
+                  </p>
                   <p>• شارك الرابط مباشرة في مجموعة الفصل (واتساب، فيسبوك) أو اعرض الرمز على السبورة في الفصل لولوج سريع للاستبيان.</p>
                   <p>• بمجرد إدلاء أي تلميذ بإجابته، ستنبثق لك لوائح مستواهم وتوصياتهم تلقائياً في فضاء الأستاذ الموجه.</p>
                 </div>
@@ -9641,7 +10064,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     >
                       {availableForms.map(form => (
                         <option key={form.formId} value={form.formId}>
-                          {form.teacherId === 'system_admin' ? '📋 [نموذج معتمد] ' : '👤 [استمارة خاصة] '} 
+                          {form.teacherId === 'system_admin' ? '[نموذج معتمد] ' : '[استمارة خاصة] '} 
                           {form.title} ({form.questions?.length ?? 15} بنداً)
                         </option>
                       ))}
@@ -10368,7 +10791,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             <div className="flex justify-between items-start gap-2 mb-5 border-b pb-4">
               <div>
                 <h3 className="text-base sm:text-lg font-black text-slate-800 flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-amber-600 animate-pulse shrink-0" />
+                  <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
                   السجل الأمني المفصل لحضور التلميذ ومخالفاته
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
@@ -10392,7 +10815,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 font-bold block">مؤشر موثوقية الأمان:</span>
-                  <span className={`text-sm font-mono font-black ${selectedProctorStudentHistory.reliabilityIndex < 40 ? 'text-red-600' : selectedProctorStudentHistory.reliabilityIndex < 80 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  <span className={`text-sm font-mono font-black tabular-nums ${selectedProctorStudentHistory.reliabilityIndex < 40 ? 'text-red-600' : selectedProctorStudentHistory.reliabilityIndex < 80 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {selectedProctorStudentHistory.reliabilityIndex !== undefined ? selectedProctorStudentHistory.reliabilityIndex : 100}%
                   </span>
                 </div>
@@ -10402,23 +10825,30 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                 <h4 className="font-bold text-slate-700 mb-2">لائحة المخالفات السلوكية وحركات المتصفح:</h4>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {!selectedProctorStudentHistory.violations || selectedProctorStudentHistory.violations.length === 0 ? (
-                    <p className="text-center py-6 text-slate-400 italic bg-emerald-50/50 border border-emerald-100 rounded-xl">
-                      🎉 لم يتم رصد أي تلاعب أو مغادرة للمتصفح من قبل هذا التلميذ. نزاهة كاملة!
-                    </p>
+                    <div className="text-center py-6 text-emerald-700 font-semibold bg-emerald-50/50 border border-emerald-100 rounded-xl flex items-center justify-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>لم يتم رصد أي تلاعب أو مغادرة للمتصفح من قبل هذا التلميذ. نزاهة كاملة.</span>
+                    </div>
                   ) : (
                     selectedProctorStudentHistory.violations.map((vi: any, idx: number) => {
                       return (
                         <div key={idx} className="p-3 bg-red-50/60 border border-red-100 rounded-xl space-y-1">
                           <div className="flex justify-between font-bold text-slate-700">
                             <span className="text-rose-700">{vi.type}</span>
-                            <span className="font-mono text-slate-500 font-semibold">{new Date(vi.time).toLocaleTimeString('ar-EG')}</span>
+                            <span className="font-mono text-slate-500 font-semibold tabular-nums">{new Date(vi.time).toLocaleTimeString('ar-EG')}</span>
                           </div>
-                          <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-semibold tabular-nums">
                             {vi.duration !== undefined && vi.duration > 0 && (
-                              <span>⏱️ غاَب عن الشاشة لمدة: {vi.duration} ثوانٍ</span>
+                              <span className="inline-flex items-center gap-1">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span>غاَب عن الشاشة لمدة: {vi.duration} ثوانٍ</span>
+                              </span>
                             )}
                             {vi.count !== undefined && (
-                              <span>🔄 عدد التكرار: {vi.count} مرات</span>
+                              <span className="inline-flex items-center gap-1">
+                                <RefreshCw className="w-3 h-3 shrink-0" />
+                                <span>عدد التكرار: {vi.count} مرات</span>
+                              </span>
                             )}
                           </div>
                         </div>
@@ -10443,7 +10873,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       {toast && (
         <div className="fixed bottom-20 md:bottom-6 left-3 right-3 sm:left-6 sm:right-auto sm:max-w-sm z-50 animate-fade-in bg-slate-900 border border-slate-800 text-white py-3.5 px-5 rounded-2xl flex items-center justify-between gap-3 shadow-2xl" dir="rtl">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-3 h-3 shrink-0 rounded-full ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`}></div>
+            <div className={`w-3 h-3 shrink-0 rounded-full ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
             <p className="text-xs font-black font-sans leading-relaxed">{toast.message}</p>
           </div>
           {liveArrivalToastSub && (
@@ -10569,12 +10999,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               })}
             </div>
           ) : (
-            <div className="grid grid-cols-5 gap-1">
+            <div className="flex items-center gap-1 overflow-x-auto pb-safe">
               {[
-                { id: 'monitoring', label: 'المراقبة', icon: BarChart3, activeClass: 'bg-indigo-600 text-white' },
+                { id: 'monitoring', label: 'المراقبة', icon: BarChart3, activeClass: 'bg-slate-900 text-white' },
                 { id: 'analytics', label: 'التحليلات', icon: TrendingUp, activeClass: 'bg-emerald-600 text-white' },
-                { id: 'sessions', label: 'الجلسات', icon: Calendar, activeClass: 'bg-indigo-600 text-white' },
-                { id: 'formBank', label: 'الاستمارات', icon: BookOpen, activeClass: 'bg-indigo-600 text-white' },
+                { id: 'notifications', label: 'التنبيهات', icon: BellRing, activeClass: 'bg-sky-600 text-white' },
+                { id: 'sessions', label: 'الجلسات', icon: Calendar, activeClass: 'bg-slate-900 text-white' },
+                { id: 'formBank', label: 'الاستمارات', icon: BookOpen, activeClass: 'bg-slate-900 text-white' },
                 { id: 'sync', label: 'المزامنة', icon: Database, activeClass: 'bg-emerald-600 text-white' },
               ].map((item) => {
                 const Icon = item.icon;
@@ -10584,7 +11015,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                     key={item.id}
                     type="button"
                     onClick={() => setTeacherActiveTab(item.id as any)}
-                    className={`flex flex-col items-center justify-center min-h-[48px] py-1.5 px-1 rounded-xl text-[10px] font-black transition cursor-pointer ${
+                    className={`flex-1 min-w-[60px] flex flex-col items-center justify-center min-h-[48px] py-1.5 px-1 rounded-xl text-[10px] font-black transition cursor-pointer relative ${
                       active ? `${item.activeClass} shadow-sm` : 'text-slate-500 hover:bg-slate-100'
                     }`}
                   >

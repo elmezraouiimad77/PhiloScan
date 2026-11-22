@@ -12,6 +12,19 @@ import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { initializeApp as initFirebaseApp } from 'firebase/app';
 import { getFirestore as initFirestore, doc as fDoc, setDoc as fSetDoc } from 'firebase/firestore';
 import { StudentSubmission, ThinkingStyle, Teacher, DiagnosticSession } from './src/types';
+import {
+  evaluateAndDispatchSessionNotifications,
+  getDefaultTeacherNotificationSettings,
+  getNotificationProviderStatus,
+  isValidEmailAddress,
+  loadNotificationSettingsList,
+  loadNotificationsList,
+  normalizeAndValidatePhone,
+  saveNotificationSettingsList,
+  saveNotificationsList,
+  sendPedagogicalEmail,
+  sendPedagogicalWhatsApp,
+} from './src/server/notificationsService';
 
 // Load environmental variables
 dotenv.config();
@@ -335,10 +348,11 @@ async function saveReports(data: UserReport[]): Promise<void> {
 
 // ==================== ADMINISTRATIVE MIDDLEWARE & SECURITY REGISTRY ====================
 const activeAdminTokens = new Set<string>();
+const EPHEMERAL_HMAC_FALLBACK = crypto.randomBytes(32).toString('hex');
 const ADMIN_TOKEN_HMAC_KEY =
   process.env.ADMIN_SECRET_KEY ||
   process.env.GEMINI_API_KEY ||
-  'philoscan_internal_hmac_signing_key_2026';
+  EPHEMERAL_HMAC_FALLBACK;
 
 function isValidAdminSecret(secret?: string): boolean {
   if (!secret || typeof secret !== 'string') return false;
@@ -464,6 +478,140 @@ function requireAdminAuth(req: any, res: any, next: any) {
 
   return res.status(403).json({
     error: 'غير مصرح بالعملية. يرجى تسجيل الدخول كمسؤول للمنصة باستخدام الرمز السري الصحيح.'
+  });
+}
+
+function issueTeacherToken(teacherId: string, email: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      role: 'teacher',
+      teacherId: String(teacherId || 'TCH-DEMO'),
+      email: String(email || '').toLowerCase().trim(),
+      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      nonce: crypto.randomBytes(8).toString('hex')
+    })
+  ).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
+    .update(payload)
+    .digest('base64url');
+  return `ps_tch_${payload}.${sig}`;
+}
+
+function verifyTeacherToken(
+  token: unknown
+): { role: 'teacher'; teacherId: string; email: string } | null {
+  if (!token || typeof token !== 'string') return null;
+  const clean = token.trim();
+  if (!clean.startsWith('ps_tch_')) return null;
+
+  const raw = clean.slice('ps_tch_'.length);
+  const dotIdx = raw.indexOf('.');
+  if (dotIdx === -1) return null;
+
+  const payload = raw.slice(0, dotIdx);
+  const sig = raw.slice(dotIdx + 1);
+  if (!payload || !sig) return null;
+
+  try {
+    const expectedSig = crypto
+      .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
+      .update(payload)
+      .digest('base64url');
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (
+      decoded.role !== 'teacher' ||
+      !decoded.email ||
+      !decoded.exp ||
+      decoded.exp < Date.now()
+    ) {
+      return null;
+    }
+    return {
+      role: 'teacher',
+      teacherId: String(decoded.teacherId || 'TCH-DEMO'),
+      email: String(decoded.email).toLowerCase().trim()
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function verifyFirebaseUserToken(
+  idToken: string
+): Promise<{ uid: string; email: string; emailVerified: boolean } | null> {
+  if (!idToken || !firebaseApiKey) return null;
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseApiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken })
+      }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const user = data?.users?.[0];
+    if (!user || typeof user.email !== 'string') return null;
+    return {
+      uid: String(user.localId || ''),
+      email: user.email.toLowerCase().trim(),
+      emailVerified: Boolean(user.emailVerified)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function requireTeacherOrAdminAuth(req: any, res: any, next: any) {
+  if (isAdminAuthorized(req)) {
+    req.authActor = {
+      role: 'admin',
+      teacherId: 'TCH-ADMIN',
+      email: 'phillofikr@gmail.com'
+    };
+    return next();
+  }
+
+  const bearerToken = extractAdminToken(req);
+  const teacherDecoded = verifyTeacherToken(bearerToken);
+  if (teacherDecoded) {
+    req.authActor = teacherDecoded;
+    return next();
+  }
+
+  const firebaseTokenHeader = String(req.headers['x-firebase-id-token'] || '').trim();
+  const candidateFirebaseToken = firebaseTokenHeader || bearerToken;
+  if (candidateFirebaseToken && candidateFirebaseToken.split('.').length === 3) {
+    const fbUser = await verifyFirebaseUserToken(candidateFirebaseToken);
+    if (fbUser && fbUser.email) {
+      if (fbUser.email === 'phillofikr@gmail.com' && fbUser.emailVerified) {
+        req.authActor = {
+          role: 'admin',
+          teacherId: 'TCH-ADMIN',
+          email: fbUser.email
+        };
+        return next();
+      }
+      const teachers = await loadTeachers();
+      const matched = teachers.find((t) => t.email.toLowerCase() === fbUser.email);
+      req.authActor = {
+        role: 'teacher',
+        teacherId: matched?.id || fbUser.uid || 'TCH-DEMO',
+        email: fbUser.email
+      };
+      return next();
+    }
+  }
+
+  return res.status(401).json({
+    error: 'غير مصرح بالوصول. يرجى تسجيل الدخول بحساب الأستاذ أو المدير للمتابعة.'
   });
 }
 
@@ -1579,7 +1727,7 @@ app.post('/api/teacher/login', async (req, res) => {
       regionalAcademy: existing.regionalAcademy,
       province: existing.province,
       loggedInAt: new Date().toISOString(),
-      token: 'teach_sess_' + Math.random().toString(36).substr(2, 9),
+      token: issueTeacherToken(existing.id, existing.email),
       role: 'teacher',
       teacherId: existing.id,
       specialty: existing.specialty,
@@ -2318,6 +2466,22 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
       submission: newSubmission,
       deliveryReceiptId,
       deliveredAt: nowIso
+    });
+
+    // Evaluate Smart Pedagogical Notifications asynchronously (non-blocking)
+    const sessionSubs = existingSubmissions.filter(
+      (s: any) =>
+        String(s.sessionId || s.session_id || '').toUpperCase().trim() === targetSessionId
+    );
+    evaluateAndDispatchSessionNotifications({
+      session: activeSession,
+      sessionSubmissions: sessionSubs,
+      latestSubmission: newSubmission,
+      onBroadcast: (tEmail, notif) => {
+        broadcastRealtimeEvent(tEmail, 'notification:created', { notification: notif });
+      }
+    }).catch((notifErr) => {
+      console.warn(`[Server:handlePostSubmission:${reqId}] Notification evaluation warning:`, notifErr);
     });
 
     res.json({
@@ -3474,6 +3638,419 @@ app.put('/api/landing-page', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error('Error updating landing page config:', err);
     res.status(500).json({ error: 'فشل حفظ بيانات الواجهة الرئيسية.' });
+  }
+});
+
+// ==================== SMART PEDAGOGICAL NOTIFICATIONS ROUTES ====================
+
+app.get('/api/notifications/provider-status', requireTeacherOrAdminAuth, (_req: any, res) => {
+  res.json({ status: getNotificationProviderStatus() });
+});
+
+app.get('/api/notifications/settings', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const requestedEmail = String(req.query.email || '').toLowerCase().trim();
+    if (requestedEmail && actor.role !== 'admin' && requestedEmail !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بالوصول إلى إعدادات أستاذ آخر.' });
+    }
+    const targetEmail = (requestedEmail && actor.role === 'admin' ? requestedEmail : actor.email).toLowerCase().trim();
+    const list = await loadNotificationSettingsList();
+    const found = list.find((s) => s.teacherEmail.toLowerCase().trim() === targetEmail);
+    const settings = found || getDefaultTeacherNotificationSettings(actor.teacherId, targetEmail);
+    res.json({
+      settings,
+      providerStatus: getNotificationProviderStatus()
+    });
+  } catch (err) {
+    console.error('Error fetching notification settings:', err);
+    res.status(500).json({ error: 'فشل جلب إعدادات الإشعارات.' });
+  }
+});
+
+app.put('/api/notifications/settings', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const body = req.body || {};
+    const targetEmail = actor.email.toLowerCase().trim();
+    const list = await loadNotificationSettingsList();
+    const idx = list.findIndex((s) => s.teacherEmail.toLowerCase().trim() === targetEmail);
+    const current = idx >= 0 ? list[idx] : getDefaultTeacherNotificationSettings(actor.teacherId, targetEmail);
+
+    const disableAllExternal = Boolean(body.disableAllExternal);
+    const rawEmail = String(body.emailConfig?.address ?? current.emailConfig.address ?? '').trim();
+    const wantEmail = !disableAllExternal && Boolean(body.channels?.email);
+
+    if (rawEmail && !isValidEmailAddress(rawEmail)) {
+      return res.status(400).json({ error: 'صيغة البريد الإلكتروني المخصص للإشعارات غير صحيحة.' });
+    }
+    if (wantEmail && !rawEmail) {
+      return res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صالح قبل تفعيل إشعارات البريد الإلكتروني.' });
+    }
+
+    const wantWhatsapp = !disableAllExternal && Boolean(body.channels?.whatsapp);
+    const rawCC = String(body.whatsappConfig?.countryCode ?? current.whatsappConfig.countryCode ?? '+212').trim();
+    const rawPhone = String(body.whatsappConfig?.phoneNumber ?? current.whatsappConfig.phoneNumber ?? '').trim();
+    const whatsappConsent = Boolean(body.whatsappConfig?.consentAccepted);
+
+    let cleanCC = current.whatsappConfig.countryCode || '+212';
+    let cleanPhone = current.whatsappConfig.phoneNumber || '';
+    let cleanE164 = current.whatsappConfig.e164Phone || '';
+
+    if (rawPhone) {
+      const normalized = normalizeAndValidatePhone(rawCC, rawPhone);
+      if (!normalized.valid) {
+        return res.status(400).json({ error: normalized.error || 'رقم الهاتف غير صالح.' });
+      }
+      cleanCC = normalized.cleanCountryCode;
+      cleanPhone = normalized.cleanPhoneNumber;
+      cleanE164 = normalized.e164Phone;
+    } else if (wantWhatsapp) {
+      return res.status(400).json({ error: 'يرجى إدخال رقم هاتف صحيح مع رمز الدولة قبل تفعيل إشعارات WhatsApp.' });
+    }
+
+    if (wantWhatsapp && !whatsappConsent) {
+      return res.status(400).json({ error: 'يتطلب تفعيل إشعارات WhatsApp الموافقة الصريحة على استقبال الرسائل.' });
+    }
+
+    const emailChanged = rawEmail.toLowerCase() !== (current.emailConfig.address || '').toLowerCase();
+    const phoneChanged = cleanE164 !== (current.whatsappConfig.e164Phone || '');
+    const consentAccepted = Boolean(body.consentAccepted);
+    const nowIso = new Date().toISOString();
+
+    const updatedSettings = {
+      teacherId: current.teacherId || actor.teacherId,
+      teacherEmail: targetEmail,
+      consentAccepted,
+      consentTimestamp: consentAccepted
+        ? current.consentTimestamp || nowIso
+        : null,
+      disableAllExternal,
+      channels: {
+        inApp: Boolean(body.channels?.inApp),
+        email: wantEmail,
+        whatsapp: wantWhatsapp,
+      },
+      emailConfig: {
+        address: rawEmail,
+        verified: emailChanged ? false : Boolean(current.emailConfig.verified),
+        lastTestAt: emailChanged ? null : current.emailConfig.lastTestAt || null,
+      },
+      whatsappConfig: {
+        countryCode: cleanCC,
+        phoneNumber: cleanPhone,
+        e164Phone: cleanE164,
+        consentAccepted: whatsappConsent,
+        consentTimestamp: whatsappConsent
+          ? current.whatsappConfig.consentTimestamp || nowIso
+          : null,
+        verified: phoneChanged ? false : Boolean(current.whatsappConfig.verified),
+        lastTestAt: phoneChanged ? null : current.whatsappConfig.lastTestAt || null,
+      },
+      messageTypes: {
+        classAlerts: body.messageTypes?.classAlerts !== undefined ? Boolean(body.messageTypes.classAlerts) : current.messageTypes.classAlerts,
+        studentAlerts: body.messageTypes?.studentAlerts !== undefined ? Boolean(body.messageTypes.studentAlerts) : current.messageTypes.studentAlerts,
+        aiRecommendations: body.messageTypes?.aiRecommendations !== undefined ? Boolean(body.messageTypes.aiRecommendations) : current.messageTypes.aiRecommendations,
+        sessionSummaries: body.messageTypes?.sessionSummaries !== undefined ? Boolean(body.messageTypes.sessionSummaries) : current.messageTypes.sessionSummaries,
+      },
+      updatedAt: nowIso,
+    };
+
+    if (idx >= 0) {
+      list[idx] = updatedSettings;
+    } else {
+      list.push(updatedSettings);
+    }
+    await saveNotificationSettingsList(list);
+
+    res.json({
+      success: true,
+      settings: updatedSettings,
+      providerStatus: getNotificationProviderStatus()
+    });
+  } catch (err) {
+    console.error('Error saving notification settings:', err);
+    res.status(500).json({ error: 'فشل حفظ إعدادات الإشعارات.' });
+  }
+});
+
+app.post('/api/notifications/disconnect', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const channel = String(req.body?.channel || '').trim();
+    if (!['email', 'whatsapp', 'external'].includes(channel)) {
+      return res.status(400).json({ error: 'قناة الفصل المحددة غير صالحة.' });
+    }
+
+    const list = await loadNotificationSettingsList();
+    const idx = list.findIndex((s) => s.teacherEmail.toLowerCase().trim() === actor.email);
+    const current = idx >= 0 ? list[idx] : getDefaultTeacherNotificationSettings(actor.teacherId, actor.email);
+
+    if (channel === 'email' || channel === 'external') {
+      current.channels.email = false;
+      current.emailConfig = { address: '', verified: false, lastTestAt: null };
+    }
+    if (channel === 'whatsapp' || channel === 'external') {
+      current.channels.whatsapp = false;
+      current.whatsappConfig = {
+        countryCode: '+212',
+        phoneNumber: '',
+        e164Phone: '',
+        consentAccepted: false,
+        consentTimestamp: null,
+        verified: false,
+        lastTestAt: null,
+      };
+    }
+    if (channel === 'external') {
+      current.disableAllExternal = true;
+    }
+    current.updatedAt = new Date().toISOString();
+
+    if (idx >= 0) list[idx] = current;
+    else list.push(current);
+    await saveNotificationSettingsList(list);
+
+    res.json({
+      success: true,
+      settings: current,
+      providerStatus: getNotificationProviderStatus()
+    });
+  } catch (err) {
+    console.error('Error disconnecting notification channel:', err);
+    res.status(500).json({ error: 'فشل فصل قناة الإشعارات.' });
+  }
+});
+
+app.post('/api/notifications/test-email', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const targetEmailAddress = String(req.body?.email || '').trim();
+    if (!isValidEmailAddress(targetEmailAddress)) {
+      return res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صحيح لإرسال رسالة الاختبار.' });
+    }
+
+    const result = await sendPedagogicalEmail({
+      to: targetEmailAddress,
+      subject: '[PhiloScan] رسالة اختبار ربط الإشعارات التربوية',
+      textBody:
+        'مرحباً، هذه رسالة اختبار حقيقية من نظام الإشعارات التربوية الذكية في منصة فِيلوسكان (PhiloScan) لتأكيد صلاحية ربط البريد الإلكتروني.',
+      htmlBody:
+        '<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;padding:20px;background:#f8fafc;"><div style="max-width:540px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="color:#0284c7;margin-top:0;">فِيلوسكان | PhiloScan</h3><p style="font-size:14px;color:#0f172a;">تم التحقق بنجاح من ربط بريدك الإلكتروني بنظام الإشعارات التربوية الذكية.</p></div></div>'
+    });
+
+    if (result.ok) {
+      const list = await loadNotificationSettingsList();
+      const idx = list.findIndex((s) => s.teacherEmail.toLowerCase().trim() === actor.email);
+      const current = idx >= 0 ? list[idx] : getDefaultTeacherNotificationSettings(actor.teacherId, actor.email);
+      current.emailConfig = {
+        address: targetEmailAddress,
+        verified: true,
+        lastTestAt: new Date().toISOString()
+      };
+      current.updatedAt = new Date().toISOString();
+      if (idx >= 0) list[idx] = current;
+      else list.push(current);
+      await saveNotificationSettingsList(list);
+    }
+
+    const statusCode = result.ok ? 200 : result.status === 'not_configured' ? 422 : 502;
+    res.status(statusCode).json({
+      success: result.ok,
+      deliveryStatus: result.status,
+      provider: result.provider,
+      message: result.ok
+        ? 'تم إرسال رسالة الاختبار إلى بريدك الإلكتروني بنجاح.'
+        : result.errorMessage || 'تعذر إرسال رسالة الاختبار.',
+      providerStatus: getNotificationProviderStatus()
+    });
+  } catch (err) {
+    console.error('Error testing notification email:', err);
+    res.status(500).json({ error: 'حدث خطأ أثناء اختبار إرسال البريد الإلكتروني.' });
+  }
+});
+
+app.post('/api/notifications/test-whatsapp', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const countryCode = String(req.body?.countryCode || '+212').trim();
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+    const consentAccepted = Boolean(req.body?.consentAccepted);
+
+    if (!consentAccepted) {
+      return res.status(400).json({ error: 'يرجى تأكيد الموافقة الصريحة على استقبال رسائل WhatsApp أولاً.' });
+    }
+
+    const normalized = normalizeAndValidatePhone(countryCode, phoneNumber);
+    if (!normalized.valid) {
+      return res.status(400).json({ error: normalized.error || 'رقم الهاتف غير صالح.' });
+    }
+
+    const result = await sendPedagogicalWhatsApp({
+      e164Phone: normalized.e164Phone,
+      messageText:
+        'PhiloScan | رسالة اختبار حقيقية لتأكيد ربط خدمة الإشعارات التربوية الذكية بحساب الأستاذ.'
+    });
+
+    if (result.ok) {
+      const nowIso = new Date().toISOString();
+      const list = await loadNotificationSettingsList();
+      const idx = list.findIndex((s) => s.teacherEmail.toLowerCase().trim() === actor.email);
+      const current = idx >= 0 ? list[idx] : getDefaultTeacherNotificationSettings(actor.teacherId, actor.email);
+      current.whatsappConfig = {
+        countryCode: normalized.cleanCountryCode,
+        phoneNumber: normalized.cleanPhoneNumber,
+        e164Phone: normalized.e164Phone,
+        consentAccepted: true,
+        consentTimestamp: current.whatsappConfig.consentTimestamp || nowIso,
+        verified: true,
+        lastTestAt: nowIso
+      };
+      current.updatedAt = nowIso;
+      if (idx >= 0) list[idx] = current;
+      else list.push(current);
+      await saveNotificationSettingsList(list);
+    }
+
+    const statusCode = result.ok ? 200 : result.status === 'not_configured' ? 422 : 502;
+    res.status(statusCode).json({
+      success: result.ok,
+      deliveryStatus: result.status,
+      e164Phone: normalized.e164Phone,
+      message: result.ok
+        ? 'تم إرسال رسالة الاختبار عبر WhatsApp Business Cloud API بنجاح.'
+        : result.errorMessage || 'تعذر إرسال رسالة الاختبار عبر WhatsApp.',
+      providerStatus: getNotificationProviderStatus()
+    });
+  } catch (err) {
+    console.error('Error testing WhatsApp notification:', err);
+    res.status(500).json({ error: 'حدث خطأ أثناء اختبار إرسال WhatsApp.' });
+  }
+});
+
+app.get('/api/notifications', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const requestedEmail = String(req.query.email || '').toLowerCase().trim();
+    if (requestedEmail && actor.role !== 'admin' && requestedEmail !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بالوصول إلى إشعارات أستاذ آخر.' });
+    }
+    const all = await loadNotificationsList();
+    const scoped = (
+      actor.role === 'admin' && !requestedEmail
+        ? all
+        : all.filter((n) => n.teacherEmail.toLowerCase().trim() === (requestedEmail || actor.email))
+    ).filter((n) => n.deliveryLog?.inApp !== false);
+
+    scoped.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    res.json({
+      notifications: scoped,
+      unreadCount: scoped.filter((n) => !n.isRead).length
+    });
+  } catch (err) {
+    console.error('Error fetching notifications:', err);
+    res.status(500).json({ error: 'فشل جلب قائمة الإشعارات التربوية.' });
+  }
+});
+
+app.post('/api/notifications/evaluate-session', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const sessionId = String(req.body?.sessionId || '').toUpperCase().trim();
+    if (!sessionId) {
+      return res.status(400).json({ error: 'معرف الجلسة مطلوب لإجراء الفحص البيداغوجي.' });
+    }
+    const sessions = await loadSessions();
+    const session = sessions.find((s) => s.sessionId.toUpperCase() === sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'الجلسة غير موجودة.' });
+    }
+    if (actor.role !== 'admin' && session.teacherEmail.toLowerCase().trim() !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بتحليل جلسة أستاذ آخر.' });
+    }
+    const submissions = await loadSubmissions();
+    const sessionSubs = submissions.filter(
+      (s: any) => String(s.sessionId || s.session_id || '').toUpperCase().trim() === sessionId
+    );
+    const created = await evaluateAndDispatchSessionNotifications({
+      session,
+      sessionSubmissions: sessionSubs,
+      latestSubmission: sessionSubs[0],
+      onBroadcast: (tEmail, notif) => {
+        broadcastRealtimeEvent(tEmail, 'notification:created', { notification: notif });
+      }
+    });
+    res.json({
+      success: true,
+      evaluatedCount: sessionSubs.length,
+      createdCount: created.length,
+      notifications: created
+    });
+  } catch (err) {
+    console.error('Error evaluating session notifications:', err);
+    res.status(500).json({ error: 'تعذر تقييم المؤشرات التربوية للجلسة.' });
+  }
+});
+
+app.patch('/api/notifications/mark-all-read', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const all = await loadNotificationsList();
+    const nowIso = new Date().toISOString();
+    let changed = false;
+    const updated = all.map((n) => {
+      if (actor.role === 'admin' || n.teacherEmail.toLowerCase().trim() === actor.email) {
+        if (!n.isRead) {
+          changed = true;
+          return { ...n, isRead: true, readAt: nowIso };
+        }
+      }
+      return n;
+    });
+    if (changed) await saveNotificationsList(updated);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'فشل تحديث حالة الإشعارات.' });
+  }
+});
+
+app.patch('/api/notifications/:id/read', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const { id } = req.params;
+    const all = await loadNotificationsList();
+    const idx = all.findIndex((n) => n.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'الإشعار غير موجود.' });
+    }
+    if (actor.role !== 'admin' && all[idx].teacherEmail.toLowerCase().trim() !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بتعديل إشعار أستاذ آخر.' });
+    }
+    all[idx].isRead = true;
+    all[idx].readAt = new Date().toISOString();
+    await saveNotificationsList(all);
+    res.json({ success: true, notification: all[idx] });
+  } catch (err) {
+    res.status(500).json({ error: 'فشل تحديث حالة قراءة الإشعار.' });
+  }
+});
+
+app.delete('/api/notifications/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const { id } = req.params;
+    const all = await loadNotificationsList();
+    const target = all.find((n) => n.id === id);
+    if (!target) {
+      return res.json({ success: true });
+    }
+    if (actor.role !== 'admin' && target.teacherEmail.toLowerCase().trim() !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بحذف إشعار أستاذ آخر.' });
+    }
+    await saveNotificationsList(all.filter((n) => n.id !== id));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'فشل حذف الإشعار.' });
   }
 });
 

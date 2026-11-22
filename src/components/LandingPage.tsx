@@ -22,7 +22,19 @@ import {
   Globe,
   Database,
   Grid,
-  Laptop
+  Laptop,
+  BrainCircuit,
+  UserSearch,
+  ChartNoAxesCombined,
+  ClipboardCheck,
+  ClipboardList,
+  ShieldCheck,
+  Lightbulb,
+  Settings,
+  Library,
+  Files,
+  Fingerprint,
+  GraduationCap
 } from 'lucide-react';
 
 import { doc, getDoc } from 'firebase/firestore';
@@ -132,6 +144,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
   const [editForm, setEditForm] = useState<LandingPageConfig | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [sessionCode, setSessionCode] = useState('');
+  const [imageErrors, setImageErrors] = useState<{ hero?: boolean; student?: boolean; teacher?: boolean }>({});
 
   const statsSectionRef = React.useRef<HTMLDivElement>(null);
   const [statsSectionInView, setStatsSectionInView] = useState(false);
@@ -337,11 +350,11 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
       {/* Welcome Section for First-Time Users */}
       <WelcomeSection onStartForm={() => onNavigate('form')} />
       
-      {/* 🛠️ Admin Control Banner */}
+      {/* Admin Control Banner */}
       {isAdmin && (
         <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/15 to-transparent border-y border-amber-500/20 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-right">
-          <div className="flex items-center gap-2">
-            <span className="p-1 px-2.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] animate-pulse">لوحة تسيير</span>
+          <div className="flex items-center gap-2.5">
+            <span className="p-1 px-2.5 rounded-lg bg-amber-500 text-slate-950 font-black text-[10px]">لوحة تسيير</span>
             <div>
               <p className="text-xs font-black text-slate-900 dark:text-amber-400">فضاء تحكم لمدير منصة فِيلوسكان</p>
               <p className="text-[10px] text-slate-500 -mt-0.5">يمكنك تعديل أي نص، ترويسة، أو صور الصفحة الرئيسية مباشرة وحفظها فورياً.</p>
@@ -372,13 +385,13 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
       {/* ━━━━━━ [ SECTION 1: HERO SECTION ] ━━━━━━ */}
       <section className="relative py-4 sm:py-8 lg:py-16 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center justify-center">
         {/* Glow Effects */}
-        <div className="absolute top-2 right-1/4 w-72 sm:w-96 h-72 sm:h-96 bg-blue-500/10 dark:bg-blue-600/5 rounded-full blur-[140px] pointer-events-none" />
-        <div className="absolute bottom-2 left-1/4 w-72 sm:w-96 h-72 sm:h-96 bg-cyan-400/10 dark:bg-cyan-500/5 rounded-full blur-[140px] pointer-events-none" />
+        <div className="absolute top-2 right-1/4 w-72 sm:w-96 h-72 sm:h-96 bg-sky-500/10 dark:bg-sky-600/5 rounded-full blur-[140px] pointer-events-none" />
+        <div className="absolute bottom-2 left-1/4 w-72 sm:w-96 h-72 sm:h-96 bg-blue-400/10 dark:bg-blue-500/5 rounded-full blur-[140px] pointer-events-none" />
 
         <div className="lg:col-span-7 space-y-5 sm:space-y-6 text-right">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-full bg-blue-50 border border-blue-100 dark:bg-blue-950/45 dark:border-blue-900/60 shadow-inner max-w-full">
-            <Sparkles className="w-3.5 h-3.5 text-blue-500 animate-pulse shrink-0" />
+          {/* Identity Marker */}
+          <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-lg bg-sky-50 border border-sky-200/80 dark:bg-sky-950/45 dark:border-sky-900/60 max-w-full">
+            <BrainCircuit className="w-4 h-4 text-[#0284C7] shrink-0" />
             {isEditing ? (
               <input
                 type="text"
@@ -387,13 +400,13 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                 className="bg-transparent border-b border-amber-400 focus:outline-none text-xs w-full max-w-[320px] font-bold"
               />
             ) : (
-              <span className="text-[11px] font-black text-blue-700 dark:text-blue-300 truncate">{config.heroBadge}</span>
+              <span className="text-[11px] font-black text-[#0B2545] dark:text-sky-300 truncate">{config.heroBadge}</span>
             )}
           </div>
 
           {/* Title */}
           <div className="space-y-3 sm:space-y-4">
-            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-slate-950 dark:text-white tracking-tight leading-tight">
+            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-[#0F172A] dark:text-white tracking-tight leading-tight">
               {isEditing ? (
                 <input
                   type="text"
@@ -407,7 +420,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
             </h1>
 
             {/* Slogan */}
-            <h2 className="text-xl sm:text-2xl font-extrabold text-blue-600 dark:text-blue-400 leading-snug">
+            <h2 className="text-xl sm:text-2xl font-extrabold text-[#0284C7] dark:text-sky-400 leading-snug">
               {isEditing ? (
                 <input
                   type="text"
@@ -439,32 +452,34 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
           <div className="pt-3 sm:pt-4 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
             <button
               onClick={() => onNavigate('teacher')}
-              className="min-h-[46px] py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm rounded-xl transition duration-200 shadow-md hover:shadow-lg hover:shadow-blue-500/10 hover:-translate-y-0.5 flex items-center justify-center"
+              className="min-h-[46px] py-3 px-6 bg-[#0F172A] hover:bg-[#0B2545] text-white font-extrabold text-xs sm:text-sm rounded-xl transition duration-200 shadow-md hover:shadow-lg hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
             >
-              دخول الأستاذ
+              <GraduationCap className="w-4 h-4 text-sky-400" />
+              <span>دخول الأستاذ</span>
             </button>
             <button
               onClick={() => onNavigate('form')}
-              className="min-h-[46px] py-3 px-6 bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-200/85 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-100 dark:border-slate-800 font-extrabold text-xs sm:text-sm rounded-xl transition duration-200 shadow-xs flex items-center justify-center"
+              className="min-h-[46px] py-3 px-6 bg-[#0284C7] hover:bg-[#0369A1] text-white font-extrabold text-xs sm:text-sm rounded-xl transition duration-200 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
             >
-              دخول التلميذ
+              <ClipboardCheck className="w-4 h-4" />
+              <span>دخول التلميذ</span>
             </button>
             <button
               onClick={() => {
                 const whySection = document.getElementById('why-philoscan');
                 if (whySection) whySection.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="min-h-[44px] py-2.5 px-4 text-blue-600 dark:text-blue-400 hover:underline font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-1 cursor-pointer"
+              className="min-h-[44px] py-2.5 px-4 text-[#0284C7] dark:text-sky-400 hover:underline font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-1 cursor-pointer"
             >
-              <span>اكتشف المنصة ◀</span>
+              <span>اكتشف المنصة</span>
+              <ChevronLeft className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Hero Visual Block */}
         <div className="lg:col-span-5 relative">
-          <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-3xl sm:rounded-[2.5rem] blur-md opacity-25 dark:opacity-40 animate-pulse" />
-          <div className="relative bg-white dark:bg-slate-900 p-2 sm:p-3 rounded-3xl sm:rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden aspect-video lg:aspect-square flex items-center justify-center">
+          <div className="relative bg-white dark:bg-slate-900 p-2 sm:p-3 rounded-3xl sm:rounded-[2.2rem] border border-slate-200/90 dark:border-slate-800 shadow-xl overflow-hidden aspect-video lg:aspect-square flex items-center justify-center">
             {isEditing ? (
               <div className="w-full h-full flex flex-col items-center justify-center gap-2 p-4">
                 <ImageIcon className="w-12 h-12 text-slate-400" />
@@ -476,24 +491,32 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                   className="bg-transparent text-xs border border-amber-400 focus:outline-none p-2 rounded-lg w-full text-center"
                 />
               </div>
+            ) : imageErrors.hero || !config.heroImage ? (
+              <div className="w-full h-full rounded-2xl sm:rounded-[1.8rem] bg-gradient-to-br from-[#0F172A] via-[#0B2545] to-[#0284C7] flex flex-col items-center justify-center p-6 text-white text-center gap-3">
+                <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center">
+                  <BrainCircuit className="w-9 h-9 text-sky-300" />
+                </div>
+                <p className="text-sm font-black tracking-tight">بصمة فِيلوسكان التشخيصية</p>
+                <p className="text-[11px] text-sky-100/80 max-w-xs font-medium">منظومة تحليلية لرصد التمثلات القبلية والمهارات الحجاجية في درس الفلسفة</p>
+              </div>
             ) : (
               <img
                 src={config.heroImage}
                 alt="PhiloScan Hero Illustration"
                 referrerPolicy="no-referrer"
                 loading="lazy"
-                className="w-full h-full object-cover rounded-2xl sm:rounded-[2.1rem] transition duration-500 hover:scale-[1.03]"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&q=80&w=600";
-                }}
+                className="w-full h-full object-cover rounded-2xl sm:rounded-[1.8rem] transition duration-500 hover:scale-[1.02]"
+                onError={() => setImageErrors((prev) => ({ ...prev, hero: true }))}
               />
             )}
             {/* Live Data Overlay */}
-            <div className="hidden sm:flex absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-slate-950/85 backdrop-blur-md rounded-2xl p-2.5 sm:p-3 border border-slate-800 text-white items-center gap-3 shadow-md max-w-xs animate-bounce" style={{ animationDuration: '4s' }}>
-              <div className="w-8 h-8 sm:w-9 sm:h-9 bg-blue-500 text-white rounded-xl flex items-center justify-center font-bold">🧠</div>
+            <div className="hidden sm:flex absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-[#0F172A]/90 backdrop-blur-md rounded-2xl p-2.5 sm:p-3 border border-slate-700/80 text-white items-center gap-3 shadow-lg max-w-xs">
+              <div className="w-9 h-9 bg-[#0284C7] text-white rounded-xl flex items-center justify-center">
+                <BrainCircuit className="w-5 h-5" />
+              </div>
               <div>
-                <p className="text-[10px] text-slate-400 font-bold">تحليل بيداغوجي ذكي</p>
-                <p className="text-[11px] font-black text-emerald-400">بصمة فكرية فورية للأقسام</p>
+                <p className="text-[10px] text-slate-300 font-bold">تحليل بيداغوجي ذكي</p>
+                <p className="text-[11px] font-black text-sky-300">بصمة فكرية فورية للأقسام</p>
               </div>
             </div>
           </div>
@@ -503,7 +526,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
       {/* ━━━━━━ [ SECTION 2: WHY PHILOSCAN ] ━━━━━━ */}
       <section id="why-philoscan" className="py-6 space-y-8 relative scroll-mt-20">
         <div className="text-center max-w-2xl mx-auto space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-950 dark:text-white tracking-tight">
+          <h2 className="text-2xl sm:text-3xl font-black text-[#0F172A] dark:text-white tracking-tight">
             {isEditing ? (
               <input
                 type="text"
@@ -515,23 +538,22 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
               config.whyTitle
             )}
           </h2>
-          <div className="w-16 h-1 bg-blue-600 rounded-full mx-auto" />
+          <div className="w-16 h-1 bg-[#0284C7] rounded-full mx-auto" />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {config.whyCards.map((card, idx) => (
             <motion.div
               key={idx}
-              whileHover={{ y: -5 }}
-              className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 p-6 rounded-[24px] shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col text-right justify-between relative group overflow-hidden"
+              whileHover={{ y: -4 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 p-6 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 flex flex-col text-right justify-between relative group overflow-hidden"
             >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition" />
               <div className="space-y-4 relative z-10">
-                <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950 rounded-2xl flex items-center justify-center text-xl shadow-xs text-blue-600 dark:text-blue-400 font-bold">
-                  {idx === 0 && '🔬'}
-                  {idx === 1 && '📊'}
-                  {idx === 2 && '📋'}
-                  {idx === 3 && '🤖'}
+                <div className="w-11 h-11 bg-sky-50 dark:bg-sky-950/60 border border-sky-100 dark:border-sky-900 rounded-xl flex items-center justify-center text-[#0284C7] dark:text-sky-400">
+                  {idx === 0 && <UserSearch className="w-5 h-5" />}
+                  {idx === 1 && <ChartNoAxesCombined className="w-5 h-5" />}
+                  {idx === 2 && <ClipboardList className="w-5 h-5" />}
+                  {idx === 3 && <BrainCircuit className="w-5 h-5" />}
                 </div>
                 
                 {isEditing ? (
@@ -551,7 +573,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                   </div>
                 ) : (
                   <>
-                    <h3 className="font-extrabold text-slate-950 dark:text-white text-base">{card.title}</h3>
+                    <h3 className="font-extrabold text-[#0F172A] dark:text-white text-base">{card.title}</h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">{card.desc}</p>
                   </>
                 )}
@@ -643,22 +665,25 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                     className="bg-transparent text-xs border border-amber-400 focus:outline-none w-full text-center mt-2 p-1.5 rounded-md"
                   />
                 </div>
+              ) : imageErrors.student || !config.studentImage ? (
+                <div className="w-full h-full rounded-2xl bg-gradient-to-br from-sky-50 via-blue-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                  <ClipboardList className="w-10 h-10 text-[#0284C7]" />
+                  <span className="text-xs font-extrabold text-[#0F172A] dark:text-white">بوابة التلميذ التشخيصية</span>
+                </div>
               ) : (
                 <img
                   src={config.studentImage}
                   alt="Student Portal"
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover rounded-2xl transition duration-500 group-hover:scale-[1.025]"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&q=80&w=400";
-                  }}
+                  onError={() => setImageErrors((prev) => ({ ...prev, student: true }))}
                 />
               )}
             </div>
 
             <div className="space-y-3 text-right">
-              <span className="p-1 px-3 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 text-[10px] font-black tracking-wider">الالتحاق باستمارة الحصة</span>
-              <h3 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white">
+              <span className="inline-block py-1 px-2.5 rounded-lg bg-sky-50 border border-sky-200 dark:bg-sky-950 dark:border-sky-900 text-[#0284C7] dark:text-sky-300 text-[10px] font-black tracking-wider">الالتحاق باستمارة الحصة</span>
+              <h3 className="text-xl sm:text-2xl font-black text-[#0F172A] dark:text-white">
                 {isEditing ? (
                   <input
                     type="text"
@@ -694,7 +719,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                   placeholder="مثال: PS-DE7M00"
                   value={sessionCode}
                   onChange={(e) => setSessionCode(e.target.value.toUpperCase().trim())}
-                  className="flex-1 min-h-[46px] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl py-2.5 px-3 text-center font-mono font-extrabold text-base sm:text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner"
+                  className="flex-1 min-h-[46px] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl py-2.5 px-3 text-center font-mono font-extrabold text-base sm:text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/20 shadow-inner"
                   dir="ltr"
                 />
                 <button
@@ -705,7 +730,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                     }
                     onNavigate('form', sessionCode);
                   }}
-                  className="min-h-[46px] py-2.5 px-5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm rounded-xl transition cursor-pointer flex items-center justify-center gap-1 active:scale-95 shrink-0"
+                  className="min-h-[46px] py-2.5 px-5 bg-[#0284C7] hover:bg-[#0369A1] text-white font-extrabold text-xs sm:text-sm rounded-xl transition cursor-pointer flex items-center justify-center gap-1 active:scale-95 shrink-0"
                 >
                   دخول الجلسة
                 </button>
@@ -717,9 +742,10 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
             <span className="text-slate-400 font-bold">بدء تجربة عينة مفتوحة؟</span>
             <button
               onClick={() => onNavigate('form')}
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 font-extrabold transition flex items-center gap-0.5 hover:underline"
+              className="text-[#0284C7] dark:text-sky-400 hover:underline font-extrabold transition flex items-center gap-1.5"
             >
-              📊 {isEditing ? (
+              <ChartNoAxesCombined className="w-3.5 h-3.5" />
+              {isEditing ? (
                 <input
                   type="text"
                   value={editForm?.studentBtnText}
@@ -727,15 +753,16 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                   className="bg-transparent border-b border-amber-400 focus:outline-none text-[10px]"
                 />
               ) : (
-                config.studentBtnText + " المفتوحة"
-              )} ◀
+                <span>{config.studentBtnText} المفتوحة</span>
+              )}
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
         {/* Portal 5: Teacher Portal Block */}
-        <div className="bg-slate-950 text-white rounded-[32px] p-6 sm:p-8 flex flex-col justify-between shadow-xl relative overflow-hidden group">
-          <div className="absolute top-0 left-0 w-32 h-32 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="bg-[#0F172A] text-white rounded-[32px] p-6 sm:p-8 flex flex-col justify-between shadow-xl relative overflow-hidden group">
+          <div className="absolute top-0 left-0 w-32 h-32 bg-sky-600/10 rounded-full blur-3xl pointer-events-none" />
           
           <div className="space-y-6">
             <div className="aspect-video relative rounded-2xl overflow-hidden shadow-md border border-slate-800/80">
@@ -749,21 +776,24 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                     className="bg-transparent text-xs border border-amber-400 focus:outline-none w-full text-center mt-2 p-1.5 rounded-md text-white"
                   />
                 </div>
+              ) : imageErrors.teacher || !config.teacherImage ? (
+                <div className="w-full h-full rounded-2xl bg-gradient-to-br from-[#0B2545] via-[#0F172A] to-sky-900 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                  <GraduationCap className="w-10 h-10 text-sky-300" />
+                  <span className="text-xs font-extrabold text-white">فضاء الأستاذ التحليلي</span>
+                </div>
               ) : (
                 <img
                   src={config.teacherImage}
                   alt="Teacher Dashboard"
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover rounded-2xl transition duration-500 group-hover:scale-[1.025]"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&q=80&w=400";
-                  }}
+                  onError={() => setImageErrors((prev) => ({ ...prev, teacher: true }))}
                 />
               )}
             </div>
 
             <div className="space-y-3 text-right">
-              <span className="p-1 px-3 rounded-full bg-amber-500/10 text-amber-500 text-[10px] font-black tracking-wider">فضاء التوجيه والإشراف للأقسام</span>
+              <span className="inline-block py-1 px-2.5 rounded-lg bg-sky-500/15 border border-sky-400/30 text-sky-300 text-[10px] font-black tracking-wider">فضاء التوجيه والإشراف للأقسام</span>
               <h3 className="text-xl sm:text-2xl font-black text-white">
                 {isEditing ? (
                   <input
@@ -909,13 +939,13 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
             >
               <div className="absolute top-0 left-0 w-24 h-24 bg-blue-500/3 rounded-full blur-3xl" />
               <div className="space-y-3 relative z-10">
-                <div className="w-10 h-10 bg-slate-100 dark:bg-slate-950 rounded-xl flex items-center justify-center shadow-xs font-bold text-lg">
-                  {idx === 0 && '🧬'}
-                  {idx === 1 && '💡'}
-                  {idx === 2 && '⚙️'}
-                  {idx === 3 && '📄'}
-                  {idx === 4 && '📚'}
-                  {idx === 5 && '🌟'}
+                <div className="w-10 h-10 bg-sky-50 dark:bg-sky-950/60 border border-sky-100 dark:border-sky-900 rounded-xl flex items-center justify-center text-[#0284C7] dark:text-sky-400">
+                  {idx === 0 && <Fingerprint className="w-5 h-5" />}
+                  {idx === 1 && <Lightbulb className="w-5 h-5" />}
+                  {idx === 2 && <Settings className="w-5 h-5" />}
+                  {idx === 3 && <Files className="w-5 h-5" />}
+                  {idx === 4 && <Library className="w-5 h-5" />}
+                  {idx === 5 && <ShieldCheck className="w-5 h-5" />}
                 </div>
 
                 {isEditing ? (
@@ -947,9 +977,9 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
       {/* ━━━━━━ [ SECTION 8: PLATFORM METRICS / COUNTERS ] ━━━━━━ */}
       <section ref={statsSectionRef} className="py-8 relative">
-        <div className="absolute inset-0 bg-blue-600 rounded-[40px] opacity-10 blur-3xl pointer-events-none" />
+        <div className="absolute inset-0 bg-sky-600 rounded-[40px] opacity-10 blur-3xl pointer-events-none" />
         
-        <div className="bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950 text-white rounded-3xl sm:rounded-[40px] p-5 sm:p-12 border border-slate-800/80 shadow-2xl relative overflow-hidden">
+        <div className="bg-gradient-to-br from-[#0F172A] via-[#0B2545] to-[#0284C7]/90 text-white rounded-3xl sm:rounded-[40px] p-5 sm:p-12 border border-slate-800/80 shadow-2xl relative overflow-hidden">
           
           <div className="absolute -top-12 -left-12 w-64 h-64 bg-blue-500/10 rounded-full blur-[100px] pointer-events-none" />
           <div className="absolute -bottom-12 -right-12 w-64 h-64 bg-cyan-400/15 rounded-full blur-[100px] pointer-events-none" />
@@ -968,9 +998,9 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
                 config.statsTitle
               )}
             </h3>
-            <p className="text-[11px] sm:text-xs text-slate-400 font-extrabold uppercase tracking-widest flex items-center justify-center gap-1">
-              <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-              مؤشرات إحصائية مباشرة ومتحركة بالكامل
+            <p className="text-[11px] sm:text-xs text-sky-200 font-extrabold uppercase tracking-widest flex items-center justify-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              مؤشرات إحصائية حية للمنصة
             </p>
           </div>
 
@@ -979,7 +1009,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
             
             {/* Stat 1: Teachers */}
             <div className="space-y-2">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-amber-500">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono tabular-nums text-amber-400">
                 +{animatedStats.teachers}
               </div>
               <p className="text-[10px] sm:text-xs font-black text-slate-300">
@@ -998,7 +1028,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
             {/* Stat 2: Schools */}
             <div className="space-y-2">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-blue-400">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono tabular-nums text-sky-300">
                 +{animatedStats.schools}
               </div>
               <p className="text-[10px] sm:text-xs font-black text-slate-300">
@@ -1017,7 +1047,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
             {/* Stat 3: Sessions */}
             <div className="space-y-2">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-emerald-400">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono tabular-nums text-emerald-400">
                 +{animatedStats.sessions}
               </div>
               <p className="text-[10px] sm:text-xs font-black text-slate-300">
@@ -1036,7 +1066,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
             {/* Stat 4: Responses */}
             <div className="space-y-2">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-cyan-400">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono tabular-nums text-cyan-300">
                 +{animatedStats.submissions}
               </div>
               <p className="text-[10px] sm:text-xs font-black text-slate-300">
@@ -1055,7 +1085,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
             {/* Stat 5: Students */}
             <div className="space-y-2 col-span-2 md:col-span-1">
-              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-indigo-400">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono tabular-nums text-indigo-300">
                 +{animatedStats.students}
               </div>
               <p className="text-[10px] sm:text-xs font-black text-slate-300">
@@ -1222,7 +1252,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
         </div>
       </section>
 
-      {/* 🔒 Save and Persist Panel (Floating at bottom center when in-place edit is active) */}
+      {/* Save and Persist Panel (Floating at bottom center when in-place edit is active) */}
       <AnimatePresence>
         {isEditing && (
           <motion.div
@@ -1232,7 +1262,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
             className="fixed bottom-3 right-3 left-3 sm:bottom-6 sm:right-6 sm:left-6 max-w-md mx-auto bg-slate-950 text-white rounded-2xl p-3.5 sm:p-4 border border-slate-800 shadow-2xl z-50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center animate-spin shrink-0" style={{ animationDuration: '6s' }}>
+              <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center shrink-0">
                 <Zap className="w-5 h-5 text-slate-950" />
               </div>
               <div className="text-right">

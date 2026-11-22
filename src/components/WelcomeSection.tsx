@@ -122,7 +122,7 @@ export default function WelcomeSection({ onStartForm, onDismiss }: WelcomeSectio
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
-        className="w-full bg-[#f8fafc] dark:bg-[#070d19] border-2 border-dashed border-blue-200/90 dark:border-blue-950 rounded-3xl sm:rounded-[2.5rem] p-4 sm:p-8 md:p-10 shadow-xl relative overflow-hidden"
+        className="w-full bg-[#f8fafc] dark:bg-[#070d19] border border-slate-200 dark:border-slate-800 rounded-3xl sm:rounded-[2.2rem] p-4 sm:p-8 md:p-10 shadow-xl relative overflow-hidden"
         id="welcome-section-root"
       >
         {/* Subtle geometric grid background pattern */}
@@ -144,9 +144,9 @@ export default function WelcomeSection({ onStartForm, onDismiss }: WelcomeSectio
           
           {/* Right Information Side */}
           <div className="lg:col-span-6 space-y-6">
-            <div className="inline-flex items-center gap-2 py-1.5 px-3.5 rounded-full bg-blue-100/60 border border-blue-200/50 dark:bg-blue-950 dark:border-blue-900">
-              <Sparkles className="w-4 h-4 text-blue-600 animate-spin" style={{ animationDuration: '6s' }} />
-              <span className="text-[11px] font-black text-blue-800 dark:text-blue-300">أول دخول لمنصة فِيلوسكان ميديا؟</span>
+            <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-lg bg-sky-50 border border-sky-200/80 dark:bg-sky-950 dark:border-sky-900">
+              <Sparkles className="w-4 h-4 text-[#0284C7]" />
+              <span className="text-[11px] font-black text-[#0B2545] dark:text-sky-300">أول دخول لمنصة فِيلوسكان؟</span>
             </div>
 
             <div className="space-y-3">
@@ -189,7 +189,7 @@ export default function WelcomeSection({ onStartForm, onDismiss }: WelcomeSectio
           <div className="lg:col-span-6">
             <motion.div
               layoutId="interactive-welcome-panel"
-              className={`p-4 sm:p-6 rounded-3xl sm:rounded-[2.2rem] border-2 border-dashed ${currentDimension.bgLight} ${currentDimension.borderAccent} relative h-full flex flex-col justify-between`}
+              className={`p-4 sm:p-6 rounded-3xl sm:rounded-[2rem] border ${currentDimension.bgLight} ${currentDimension.borderAccent} relative h-full flex flex-col justify-between`}
             >
               {/* Highlight Glow or Icon container */}
               <div className="absolute top-4 left-4 opacity-5 pointer-events-none">
@@ -255,9 +255,9 @@ export default function WelcomeSection({ onStartForm, onDismiss }: WelcomeSectio
                       // Also dismiss so they don't see it again or mark it seen
                       localStorage.setItem('philoscan_welcome_dismissed', 'true');
                     }}
-                    className="flex-1 sm:flex-none py-2.5 px-5 min-h-[44px] bg-[#0277b6] hover:bg-[#02669e] text-white font-extrabold text-xs rounded-xl shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 whitespace-nowrap"
+                    className="flex-1 sm:flex-none py-2.5 px-5 min-h-[44px] bg-[#0284C7] hover:bg-[#0369A1] text-white font-extrabold text-xs rounded-xl shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 whitespace-nowrap"
                   >
-                    <span>ابدأ التشخيص الآن 🚀</span>
+                    <span>ابدأ التشخيص الآن</span>
                     <ArrowLeft className="w-3.5 h-3.5" />
                   </button>
                 </div>

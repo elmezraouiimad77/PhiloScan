@@ -270,5 +270,149 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ============================================
+    // COLLECTION 7: TEACHER NOTIFICATIONS & SETTINGS (OWNER ISOLATED)
+    // ============================================
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /notificationSettings/{settingId} {
+        function isValidNotificationSettings(data) {
+          return data.keys().hasAll([
+                   'teacherId', 'teacherEmail', 'consentAccepted', 'disableAllExternal',
+                   'channels', 'emailConfig', 'whatsappConfig', 'messageTypes', 'updatedAt'
+                 ]) &&
+                 data.keys().hasOnly([
+                   'teacherId', 'teacherEmail', 'consentAccepted', 'consentTimestamp',
+                   'disableAllExternal', 'channels', 'emailConfig', 'whatsappConfig',
+                   'messageTypes', 'updatedAt'
+                 ]) &&
+                 isValidId(data.teacherId) &&
+                 data.teacherEmail is string && data.teacherEmail.size() <= 200 &&
+                 data.consentAccepted is bool &&
+                 (!('consentTimestamp' in data) || data.consentTimestamp == null || (data.consentTimestamp is string && data.consentTimestamp.size() <= 40)) &&
+                 data.disableAllExternal is bool &&
+                 data.channels is map &&
+                 data.channels.keys().hasAll(['inApp', 'email', 'whatsapp']) &&
+                 data.channels.keys().hasOnly(['inApp', 'email', 'whatsapp']) &&
+                 data.channels.inApp is bool &&
+                 data.channels.email is bool &&
+                 data.channels.whatsapp is bool &&
+                 data.emailConfig is map &&
+                 data.emailConfig.keys().hasAll(['address', 'verified']) &&
+                 data.emailConfig.keys().hasOnly(['address', 'verified', 'lastTestAt']) &&
+                 data.emailConfig.address is string && data.emailConfig.address.size() <= 200 &&
+                 data.emailConfig.verified is bool &&
+                 data.whatsappConfig is map &&
+                 data.whatsappConfig.keys().hasAll(['countryCode', 'phoneNumber', 'e164Phone', 'consentAccepted', 'verified']) &&
+                 data.whatsappConfig.keys().hasOnly(['countryCode', 'phoneNumber', 'e164Phone', 'consentAccepted', 'consentTimestamp', 'verified', 'lastTestAt']) &&
+                 data.whatsappConfig.countryCode is string && data.whatsappConfig.countryCode.size() <= 10 &&
+                 data.whatsappConfig.phoneNumber is string && data.whatsappConfig.phoneNumber.size() <= 24 &&
+                 data.whatsappConfig.e164Phone is string && data.whatsappConfig.e164Phone.size() <= 32 &&
+                 data.whatsappConfig.consentAccepted is bool &&
+                 data.whatsappConfig.verified is bool &&
+                 data.messageTypes is map &&
+                 data.messageTypes.keys().hasAll(['classAlerts', 'studentAlerts', 'aiRecommendations', 'sessionSummaries']) &&
+                 data.messageTypes.keys().hasOnly(['classAlerts', 'studentAlerts', 'aiRecommendations', 'sessionSummaries']) &&
+                 data.messageTypes.classAlerts is bool &&
+                 data.messageTypes.studentAlerts is bool &&
+                 data.messageTypes.aiRecommendations is bool &&
+                 data.messageTypes.sessionSummaries is bool &&
+                 data.updatedAt is string && data.updatedAt.size() <= 40;
+        }
+
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(settingId) && (request.auth.uid == userId || isAdmin());
+        allow list: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(settingId) &&
+                      isValidNotificationSettings(incoming()) && (
+                        isAdmin() || (
+                          request.auth.uid == userId &&
+                          incoming().teacherId == request.auth.uid
+                        )
+                      );
+
+        allow update: if isSignedIn() && isValidId(userId) && isValidId(settingId) &&
+                      isValidNotificationSettings(incoming()) && (
+                        isAdmin() || (
+                          request.auth.uid == userId &&
+                          incoming().teacherId == existing().teacherId &&
+                          incoming().teacherId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'consentAccepted', 'consentTimestamp', 'disableAllExternal',
+                            'channels', 'emailConfig', 'whatsappConfig', 'messageTypes', 'updatedAt'
+                          ])
+                        )
+                      );
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(settingId) && (request.auth.uid == userId || isAdmin());
+      }
+
+      match /notifications/{notificationId} {
+        function isValidPedagogicalNotification(data) {
+          return data.keys().hasAll([
+                   'id', 'teacherId', 'teacherEmail', 'title', 'indicatorType',
+                   'indicatorLabel', 'category', 'sessionId', 'sessionTitle',
+                   'classNameLabel', 'gradeLevel', 'summary', 'priority',
+                   'recommendation', 'reportPath', 'isRead', 'createdAt'
+                 ]) &&
+                 data.keys().hasOnly([
+                   'id', 'teacherId', 'teacherEmail', 'title', 'indicatorType',
+                   'indicatorLabel', 'category', 'sessionId', 'sessionTitle',
+                   'classNameLabel', 'gradeLevel', 'summary', 'priority',
+                   'recommendation', 'reportPath', 'studentRefId',
+                   'submissionCountAtTrigger', 'isRead', 'readAt', 'deliveryLog', 'createdAt'
+                 ]) &&
+                 isValidId(data.id) &&
+                 isValidId(data.teacherId) &&
+                 data.teacherEmail is string && data.teacherEmail.size() <= 200 &&
+                 data.title is string && data.title.size() <= 240 &&
+                 data.indicatorType in [
+                   'critical_thinking_difficulty', 'argumentation_weakness',
+                   'cognitive_fear_elevation', 'low_curiosity_readiness',
+                   'class_level_disparity', 'individual_follow_up'
+                 ] &&
+                 data.indicatorLabel is string && data.indicatorLabel.size() <= 160 &&
+                 data.category in ['class_alert', 'student_alert', 'ai_recommendation'] &&
+                 isValidId(data.sessionId) &&
+                 data.sessionTitle is string && data.sessionTitle.size() <= 200 &&
+                 data.classNameLabel is string && data.classNameLabel.size() <= 120 &&
+                 data.gradeLevel is string && data.gradeLevel.size() <= 120 &&
+                 data.summary is string && data.summary.size() <= 800 &&
+                 data.priority in ['عادي', 'مهم', 'مرتفع'] &&
+                 data.recommendation is string && data.recommendation.size() <= 600 &&
+                 data.reportPath is string && data.reportPath.size() <= 260 &&
+                 (!('studentRefId' in data) || (data.studentRefId is string && data.studentRefId.size() <= 128)) &&
+                 (!('submissionCountAtTrigger' in data) || (data.submissionCountAtTrigger is int && data.submissionCountAtTrigger >= 0)) &&
+                 data.isRead is bool &&
+                 (!('readAt' in data) || data.readAt == null || (data.readAt is string && data.readAt.size() <= 40)) &&
+                 data.createdAt is string && data.createdAt.size() <= 40;
+        }
+
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(notificationId) && (request.auth.uid == userId || isAdmin());
+        allow list: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(notificationId) &&
+                      isValidPedagogicalNotification(incoming()) && (
+                        isAdmin() || (
+                          request.auth.uid == userId &&
+                          incoming().teacherId == request.auth.uid
+                        )
+                      );
+
+        allow update: if isSignedIn() && isValidId(userId) && isValidId(notificationId) &&
+                      isValidPedagogicalNotification(incoming()) && (
+                        isAdmin() || (
+                          request.auth.uid == userId &&
+                          incoming().teacherId == existing().teacherId &&
+                          incoming().createdAt == existing().createdAt &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'readAt'])
+                        )
+                      );
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(notificationId) && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
   }
 }

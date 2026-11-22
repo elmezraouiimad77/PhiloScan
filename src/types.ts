@@ -274,3 +274,96 @@ export interface FormDocument {
   measuredIndicators?: string[];
 }
 
+export type NotificationPriority = 'عادي' | 'مهم' | 'مرتفع';
+
+export type NotificationCategory =
+  | 'class_alert'
+  | 'student_alert'
+  | 'ai_recommendation';
+
+export type PedagogicalIndicatorType =
+  | 'critical_thinking_difficulty'
+  | 'argumentation_weakness'
+  | 'cognitive_fear_elevation'
+  | 'low_curiosity_readiness'
+  | 'class_level_disparity'
+  | 'individual_follow_up';
+
+export interface TeacherNotificationSettings {
+  teacherId: string;
+  teacherEmail: string;
+  consentAccepted: boolean;
+  consentTimestamp?: string | null;
+  disableAllExternal: boolean;
+  channels: {
+    inApp: boolean;
+    email: boolean;
+    whatsapp: boolean;
+  };
+  emailConfig: {
+    address: string;
+    verified: boolean;
+    lastTestAt?: string | null;
+  };
+  whatsappConfig: {
+    countryCode: string;
+    phoneNumber: string;
+    e164Phone: string;
+    consentAccepted: boolean;
+    consentTimestamp?: string | null;
+    verified: boolean;
+    lastTestAt?: string | null;
+  };
+  messageTypes: {
+    classAlerts: boolean;
+    studentAlerts: boolean;
+    aiRecommendations: boolean;
+    sessionSummaries: boolean;
+  };
+  updatedAt: string;
+}
+
+export interface PedagogicalNotification {
+  id: string;
+  teacherId: string;
+  teacherEmail: string;
+  title: string;
+  indicatorType: PedagogicalIndicatorType;
+  indicatorLabel: string;
+  category: NotificationCategory;
+  sessionId: string;
+  sessionTitle: string;
+  classNameLabel: string;
+  gradeLevel: string;
+  summary: string;
+  priority: NotificationPriority;
+  recommendation: string;
+  reportPath: string;
+  studentRefId?: string;
+  submissionCountAtTrigger?: number;
+  isRead: boolean;
+  readAt?: string | null;
+  deliveryLog?: {
+    inApp: boolean;
+    emailStatus?: 'sent' | 'skipped' | 'not_configured' | 'failed';
+    whatsappStatus?: 'sent' | 'skipped' | 'not_configured' | 'failed';
+  };
+  createdAt: string;
+}
+
+export interface NotificationProviderStatus {
+  email: {
+    configured: boolean;
+    activeProvider: 'resend' | 'smtp' | 'none';
+    resendConfigured: boolean;
+    smtpConfigured: boolean;
+    statusLabel: string;
+  };
+  whatsapp: {
+    configured: boolean;
+    apiVersion: string;
+    statusLabel: string;
+  };
+}
+
+

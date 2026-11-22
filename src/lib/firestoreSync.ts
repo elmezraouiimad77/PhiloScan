@@ -5,17 +5,25 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { DiagnosticSession, StudentSubmission } from '../types';
+import {
+  DiagnosticSession,
+  PedagogicalNotification,
+  StudentSubmission,
+  TeacherNotificationSettings,
+} from '../types';
 
 function sanitizeId(raw: string): string {
   return (raw || 'id_' + Date.now().toString(36)).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
@@ -398,4 +406,194 @@ export async function fetchFormsFromFirestore(teacherEmail?: string): Promise<an
     return [];
   }
 }
+
+/**
+ * Saves or updates the signed-in teacher's opt-in notification settings under users/{uid}/notificationSettings/default
+ */
+export async function saveNotificationSettingsToFirestore(
+  settings: TeacherNotificationSettings
+): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+
+  const docPath = `users/${user.uid}/notificationSettings/default`;
+  try {
+    const payload: TeacherNotificationSettings = {
+      teacherId: user.uid,
+      teacherEmail: String(user.email || settings.teacherEmail || '').toLowerCase().trim().slice(0, 200),
+      consentAccepted: Boolean(settings.consentAccepted),
+      consentTimestamp: settings.consentTimestamp ? String(settings.consentTimestamp).slice(0, 40) : null,
+      disableAllExternal: Boolean(settings.disableAllExternal),
+      channels: {
+        inApp: Boolean(settings.channels?.inApp),
+        email: Boolean(settings.channels?.email),
+        whatsapp: Boolean(settings.channels?.whatsapp),
+      },
+      emailConfig: {
+        address: String(settings.emailConfig?.address || '').trim().slice(0, 200),
+        verified: Boolean(settings.emailConfig?.verified),
+        ...(settings.emailConfig?.lastTestAt ? { lastTestAt: String(settings.emailConfig.lastTestAt).slice(0, 40) } : {}),
+      },
+      whatsappConfig: {
+        countryCode: String(settings.whatsappConfig?.countryCode || '+212').slice(0, 10),
+        phoneNumber: String(settings.whatsappConfig?.phoneNumber || '').slice(0, 24),
+        e164Phone: String(settings.whatsappConfig?.e164Phone || '').slice(0, 32),
+        consentAccepted: Boolean(settings.whatsappConfig?.consentAccepted),
+        ...(settings.whatsappConfig?.consentTimestamp
+          ? { consentTimestamp: String(settings.whatsappConfig.consentTimestamp).slice(0, 40) }
+          : {}),
+        verified: Boolean(settings.whatsappConfig?.verified),
+        ...(settings.whatsappConfig?.lastTestAt
+          ? { lastTestAt: String(settings.whatsappConfig.lastTestAt).slice(0, 40) }
+          : {}),
+      },
+      messageTypes: {
+        classAlerts: Boolean(settings.messageTypes?.classAlerts),
+        studentAlerts: Boolean(settings.messageTypes?.studentAlerts),
+        aiRecommendations: Boolean(settings.messageTypes?.aiRecommendations),
+        sessionSummaries: Boolean(settings.messageTypes?.sessionSummaries),
+      },
+      updatedAt: (settings.updatedAt || new Date().toISOString()).slice(0, 40),
+    };
+
+    await setDoc(doc(db, 'users', user.uid, 'notificationSettings', 'default'), payload);
+    return true;
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.WRITE, docPath);
+    }
+    console.warn('Firestore notification settings save warning:', error?.message || error);
+    return false;
+  }
+}
+
+/**
+ * Fetches the signed-in teacher's notification settings from Firestore.
+ */
+export async function fetchNotificationSettingsFromFirestore(): Promise<TeacherNotificationSettings | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+
+  const docPath = `users/${user.uid}/notificationSettings/default`;
+  try {
+    const snap = await getDoc(doc(db, 'users', user.uid, 'notificationSettings', 'default'));
+    if (!snap.exists()) return null;
+    return snap.data() as TeacherNotificationSettings;
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.GET, docPath);
+    }
+    console.warn('Firestore notification settings fetch warning:', error?.message || error);
+    return null;
+  }
+}
+
+/**
+ * Mirrors a pedagogical notification into users/{uid}/notifications/{notificationId}
+ */
+export async function syncPedagogicalNotificationToFirestore(
+  notification: PedagogicalNotification
+): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+
+  const cleanId = sanitizeId(notification.id);
+  const docPath = `users/${user.uid}/notifications/${cleanId}`;
+  try {
+    const payload: Record<string, any> = {
+      id: cleanId,
+      teacherId: user.uid,
+      teacherEmail: String(user.email || notification.teacherEmail || '').toLowerCase().trim().slice(0, 200),
+      title: String(notification.title || '').slice(0, 240),
+      indicatorType: notification.indicatorType,
+      indicatorLabel: String(notification.indicatorLabel || '').slice(0, 160),
+      category: notification.category,
+      sessionId: sanitizeId(notification.sessionId || 'SESSION'),
+      sessionTitle: String(notification.sessionTitle || '').slice(0, 200),
+      classNameLabel: String(notification.classNameLabel || '').slice(0, 120),
+      gradeLevel: String(notification.gradeLevel || '').slice(0, 120),
+      summary: String(notification.summary || '').slice(0, 800),
+      priority: notification.priority,
+      recommendation: String(notification.recommendation || '').slice(0, 600),
+      reportPath: String(notification.reportPath || '').slice(0, 260),
+      isRead: Boolean(notification.isRead),
+      createdAt: String(notification.createdAt || new Date().toISOString()).slice(0, 40),
+    };
+    if (notification.studentRefId) {
+      payload.studentRefId = String(notification.studentRefId).slice(0, 128);
+    }
+    if (typeof notification.submissionCountAtTrigger === 'number') {
+      payload.submissionCountAtTrigger = Math.max(0, Math.round(notification.submissionCountAtTrigger));
+    }
+    if (notification.readAt) {
+      payload.readAt = String(notification.readAt).slice(0, 40);
+    }
+    await setDoc(doc(db, 'users', user.uid, 'notifications', cleanId), payload, { merge: true });
+    return true;
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.WRITE, docPath);
+    }
+    console.warn('Firestore notification sync warning:', error?.message || error);
+    return false;
+  }
+}
+
+export async function fetchPedagogicalNotificationsFromFirestore(): Promise<PedagogicalNotification[]> {
+  const user = auth.currentUser;
+  if (!user) return [];
+
+  const colPath = `users/${user.uid}/notifications`;
+  try {
+    const q = query(collection(db, colPath), orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ ...(d.data() as PedagogicalNotification), id: d.id }));
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.LIST, colPath);
+    }
+    console.warn('Firestore notifications list warning:', error?.message || error);
+    return [];
+  }
+}
+
+export async function markPedagogicalNotificationReadInFirestore(
+  notificationId: string
+): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  const cleanId = sanitizeId(notificationId);
+  const docPath = `users/${user.uid}/notifications/${cleanId}`;
+  try {
+    await updateDoc(doc(db, 'users', user.uid, 'notifications', cleanId), {
+      isRead: true,
+      readAt: new Date().toISOString(),
+    });
+    return true;
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.UPDATE, docPath);
+    }
+    return false;
+  }
+}
+
+export async function deletePedagogicalNotificationInFirestore(
+  notificationId: string
+): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  const cleanId = sanitizeId(notificationId);
+  const docPath = `users/${user.uid}/notifications/${cleanId}`;
+  try {
+    await deleteDoc(doc(db, 'users', user.uid, 'notifications', cleanId));
+    return true;
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.DELETE, docPath);
+    }
+    return false;
+  }
+}
+
 
