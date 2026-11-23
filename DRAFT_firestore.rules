@@ -1,0 +1,793 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // GLOBAL SECURITY HELPERS & PRIMITIVES
+    // ============================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidOwnerRef(ref) {
+      return ref is string && ref.matches('^own_[a-f0-9]{32}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isRealUser() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isStudentAnon() {
+      return isSignedIn() &&
+             request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    // Fail-closed teacher active status check
+    function isTeacherActive(uid) {
+      return isValidId(uid) &&
+             exists(/databases/$(database)/documents/teachers/$(uid)) &&
+             get(/databases/$(database)/documents/teachers/$(uid)).data.isDisabled == false;
+    }
+
+    // Super Admin check: requires email_verified == true, admin record isDisabled == false (or bootstrap email),
+    // and fails closed if a matching teachers/{uid} doc is disabled.
+    function isAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.firebase.sign_in_provider != 'anonymous' &&
+             (
+               request.auth.token.email == 'phillofikr@gmail.com' ||
+               (
+                 exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+                 get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isDisabled == false
+               )
+             ) &&
+             (
+               !exists(/databases/$(database)/documents/teachers/$(request.auth.uid)) ||
+               get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data.isDisabled == false
+             );
+    }
+
+    function isValidImageUrl(url) {
+      return url == null ||
+             url == '' ||
+             (
+               url is string && (
+                 (url.size() <= 500 && url.matches('^https://[^\\s<>"\']+$')) ||
+                 (url.size() <= 250000 && url.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'))
+               )
+             );
+    }
+
+    // ============================================
+    // COLLECTION 1: TEACHER PROFILES
+    // ============================================
+    match /teachers/{teacherId} {
+
+      function isValidTeacher(data) {
+        return data.keys().hasAll(['uid', 'email', 'fullName', 'role', 'isDisabled', 'createdAt', 'updatedAt']) &&
+               data.keys().hasOnly([
+                 'uid', 'email', 'fullName', 'school', 'regionalAcademy', 'province',
+                 'specialty', 'yearsExperience', 'role', 'isDisabled', 'createdAt', 'updatedAt'
+               ]) &&
+               isValidId(data.uid) &&
+               data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+               data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 256 &&
+               data.role is string && (data.role == 'teacher' || data.role == 'admin') &&
+               data.isDisabled is bool &&
+               (!('school' in data) || (data.school is string && data.school.size() <= 256)) &&
+               (!('regionalAcademy' in data) || (data.regionalAcademy is string && data.regionalAcademy.size() <= 256)) &&
+               (!('province' in data) || (data.province is string && data.province.size() <= 128)) &&
+               (!('specialty' in data) || (data.specialty is string && data.specialty.size() <= 128)) &&
+               (!('yearsExperience' in data) || (data.yearsExperience is int && data.yearsExperience >= 0 && data.yearsExperience <= 80));
+      }
+
+      allow get: if isSignedIn() && isValidId(teacherId) && (request.auth.uid == teacherId || isAdmin());
+      allow list: if isAdmin();
+
+      // Strict self-registration policy:
+      // - Only when doc does not yet exist
+      // - Verified non-anonymous user matching UID & email
+      // - Must start as role == 'teacher' and isDisabled == false
+      allow create: if isValidId(teacherId) &&
+                    !exists(/databases/$(database)/documents/teachers/$(teacherId)) &&
+                    isRealUser() &&
+                    request.auth.uid == teacherId &&
+                    isValidTeacher(incoming()) &&
+                    incoming().uid == request.auth.uid &&
+                    incoming().email == request.auth.token.email &&
+                    incoming().role == 'teacher' &&
+                    incoming().isDisabled == false &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time;
+
+      allow update: if isValidId(teacherId) && isValidTeacher(incoming()) && (
+        (
+          isAdmin() &&
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time
+        ) || (
+          isRealUser() &&
+          request.auth.uid == teacherId &&
+          existing().isDisabled == false &&
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().role == existing().role &&
+          incoming().isDisabled == existing().isDisabled &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'school', 'regionalAcademy', 'province',
+            'specialty', 'yearsExperience', 'updatedAt'
+          ])
+        )
+      );
+
+      allow delete: if isAdmin() && isValidId(teacherId);
+    }
+
+    // ============================================
+    // COLLECTION 2: CENTRAL ADMINISTRATORS (CLIENT WRITE LOCKED)
+    // ============================================
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && request.auth.uid == adminId;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // ============================================
+    // COLLECTION 3: PRIVATE DIAGNOSTIC SESSIONS
+    // ============================================
+    match /sessions/{sessionId} {
+
+      function isValidSession(data) {
+        return data.keys().hasAll(['sessionId', 'ownerRef', 'teacherId', 'class', 'isActive', 'createdAt', 'updatedAt']) &&
+               data.keys().hasOnly([
+                 'sessionId', 'ownerRef', 'teacherId', 'teacherEmail', 'institution', 'level',
+                 'stream', 'class', 'classNumber', 'title', 'province', 'isActive',
+                 'supervisedMode', 'formId', 'formTitle', 'customWeights', 'createdAt', 'updatedAt'
+               ]) &&
+               isValidId(data.sessionId) &&
+               isValidOwnerRef(data.ownerRef) &&
+               isValidId(data.teacherId) &&
+               data.class is string && data.class.size() <= 128 &&
+               data.isActive is bool &&
+               (!('teacherEmail' in data) || (data.teacherEmail is string && data.teacherEmail.size() <= 200)) &&
+               (!('title' in data) || (data.title is string && data.title.size() <= 200)) &&
+               (!('province' in data) || (data.province is string && data.province.size() <= 120)) &&
+               (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
+               (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
+               (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
+               (!('classNumber' in data) || (data.classNumber is string && data.classNumber.size() <= 40)) &&
+               (!('formId' in data) || (data.formId is string && data.formId.size() <= 120)) &&
+               (!('formTitle' in data) || (data.formTitle is string && data.formTitle.size() <= 200)) &&
+               (!('supervisedMode' in data) || data.supervisedMode is bool) &&
+               (!('customWeights' in data) || data.customWeights is map);
+      }
+
+      // Strictly private to owner teacher or Super Admin (no anonymous or guest reads)
+      allow get: if isSignedIn() && isValidId(sessionId) && (
+        isAdmin() ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && existing().teacherId == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && resource.data.teacherId == request.auth.uid)
+      );
+
+      allow create: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming()) &&
+                    incoming().sessionId == sessionId &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time && (
+                      isAdmin() || (
+                        isRealUser() &&
+                        isTeacherActive(request.auth.uid) &&
+                        incoming().teacherId == request.auth.uid
+                      )
+                    );
+
+      allow update: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming()) &&
+                    incoming().sessionId == existing().sessionId &&
+                    incoming().teacherId == existing().teacherId &&
+                    incoming().ownerRef == existing().ownerRef &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time && (
+                      isAdmin() || (
+                        isRealUser() &&
+                        isTeacherActive(request.auth.uid) &&
+                        existing().teacherId == request.auth.uid &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'class', 'classNumber', 'institution', 'isActive', 'level', 'stream',
+                          'title', 'province', 'supervisedMode', 'formId', 'formTitle',
+                          'teacherEmail', 'customWeights', 'updatedAt'
+                        ])
+                      )
+                    );
+
+      allow delete: if isSignedIn() && isValidId(sessionId) && (
+        isAdmin() ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && existing().teacherId == request.auth.uid)
+      );
+
+      // ------------------------------------------
+      // SUBCOLLECTION: LIVE PRESENCE HEARTBEATS
+      // ------------------------------------------
+      match /presence/{studentAuthUid} {
+        function isValidPresence(data) {
+          return data.keys().hasAll(['sessionId', 'studentAuthUid', 'status', 'lastHeartbeatAt']) &&
+                 data.keys().hasOnly([
+                   'sessionId', 'studentAuthUid', 'studentLabel', 'status',
+                   'violationCount', 'currentQuestionIndex', 'lastHeartbeatAt'
+                 ]) &&
+                 data.sessionId == sessionId &&
+                 data.studentAuthUid == request.auth.uid &&
+                 data.status in ['active', 'submitted', 'away', 'flagged'] &&
+                 (!('studentLabel' in data) || (data.studentLabel is string && data.studentLabel.size() <= 128)) &&
+                 (!('violationCount' in data) || (data.violationCount is int && data.violationCount >= 0 && data.violationCount <= 50)) &&
+                 (!('currentQuestionIndex' in data) || (data.currentQuestionIndex is int && data.currentQuestionIndex >= 0 && data.currentQuestionIndex <= 100)) &&
+                 data.lastHeartbeatAt == request.time;
+        }
+
+        allow get: if isSignedIn() && isValidId(studentAuthUid) && (
+          isAdmin() ||
+          request.auth.uid == studentAuthUid ||
+          (isRealUser() && isTeacherActive(request.auth.uid) && get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid)
+        );
+        allow list: if isSignedIn() && (
+          isAdmin() ||
+          (isRealUser() && isTeacherActive(request.auth.uid) && get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid)
+        );
+
+        allow create, update: if isSignedIn() &&
+                              isValidId(studentAuthUid) &&
+                              request.auth.uid == studentAuthUid &&
+                              exists(/databases/$(database)/documents/publicSessions/$(sessionId)) &&
+                              get(/databases/$(database)/documents/publicSessions/$(sessionId)).data.isActive == true &&
+                              isValidPresence(incoming());
+
+        allow delete: if isSignedIn() && (
+          isAdmin() ||
+          (isRealUser() && isTeacherActive(request.auth.uid) && get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid)
+        );
+      }
+
+      // ------------------------------------------
+      // SUBCOLLECTION: ADVISORY VIOLATION EVENTS
+      // ------------------------------------------
+      match /violationEvents/{eventId} {
+        function isValidViolationEvent(data) {
+          return data.keys().hasAll(['seq', 'studentAuthUid', 'sessionId', 'type', 'occurredAt']) &&
+                 data.keys().hasOnly(['seq', 'studentAuthUid', 'sessionId', 'type', 'details', 'advisoryOnly', 'occurredAt']) &&
+                 data.seq is int &&
+                 data.seq >= 1 &&
+                 data.seq <= 50 &&
+                 eventId == (request.auth.uid + '_' + string(data.seq)) &&
+                 data.studentAuthUid == request.auth.uid &&
+                 data.sessionId == sessionId &&
+                 data.type in [
+                   'tab_switch', 'window_blur', 'fullscreen_exit', 'copy_paste',
+                   'idle_timeout', 'devtools_suspect', 'focus_lost', 'other'
+                 ] &&
+                 (!('details' in data) || (data.details is string && data.details.size() <= 400)) &&
+                 (!('advisoryOnly' in data) || data.advisoryOnly == true) &&
+                 data.occurredAt == request.time;
+        }
+
+        allow get, list: if isSignedIn() && (
+          isAdmin() ||
+          (isRealUser() && isTeacherActive(request.auth.uid) && get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid)
+        );
+
+        allow create: if isSignedIn() &&
+                      !exists(/databases/$(database)/documents/sessions/$(sessionId)/violationEvents/$(eventId)) &&
+                      exists(/databases/$(database)/documents/publicSessions/$(sessionId)) &&
+                      get(/databases/$(database)/documents/publicSessions/$(sessionId)).data.isActive == true &&
+                      isValidViolationEvent(incoming());
+
+        allow update: if false;
+
+        allow delete: if isSignedIn() && (
+          isAdmin() ||
+          (isRealUser() && isTeacherActive(request.auth.uid) && get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid)
+        );
+      }
+    }
+
+    // ============================================
+    // COLLECTION 3B: PUBLIC SESSION METADATA (NO PII)
+    // ============================================
+    match /publicSessions/{sessionId} {
+
+      function isValidPublicSession(data) {
+        return data.keys().hasAll(['sessionId', 'ownerRef', 'class', 'isActive', 'updatedAt']) &&
+               data.keys().hasOnly([
+                 'sessionId', 'ownerRef', 'title', 'institution', 'level', 'stream',
+                 'class', 'classNumber', 'province', 'isActive', 'supervisedMode',
+                 'formId', 'formTitle', 'createdAt', 'updatedAt'
+               ]) &&
+               isValidId(data.sessionId) &&
+               data.sessionId == sessionId &&
+               isValidOwnerRef(data.ownerRef) &&
+               data.class is string && data.class.size() <= 128 &&
+               data.isActive is bool &&
+               (!('title' in data) || (data.title is string && data.title.size() <= 200)) &&
+               (!('province' in data) || (data.province is string && data.province.size() <= 120)) &&
+               (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
+               (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
+               (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
+               (!('classNumber' in data) || (data.classNumber is string && data.classNumber.size() <= 40)) &&
+               (!('formId' in data) || (data.formId is string && data.formId.size() <= 120)) &&
+               (!('formTitle' in data) || (data.formTitle is string && data.formTitle.size() <= 200)) &&
+               (!('supervisedMode' in data) || data.supervisedMode is bool) &&
+               data.updatedAt == request.time;
+      }
+
+      // Public single-document lookup by session code only (list disabled for students/guests)
+      allow get: if isValidId(sessionId);
+      allow list: if isAdmin();
+
+      allow create, update: if isSignedIn() && isValidId(sessionId) && isValidPublicSession(incoming()) && (
+        isAdmin() || (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerRef == incoming().ownerRef
+        )
+      );
+
+      allow delete: if isSignedIn() && isValidId(sessionId) && (
+        isAdmin() || (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          exists(/databases/$(database)/documents/sessions/$(sessionId)) &&
+          get(/databases/$(database)/documents/sessions/$(sessionId)).data.teacherId == request.auth.uid
+        )
+      );
+    }
+
+    // ============================================
+    // COLLECTION 3C: OPAQUE OWNER LINKS
+    // ============================================
+    match /ownerLinks/{ownerRef} {
+      allow get, delete: if isSignedIn() && isValidOwnerRef(ownerRef) && (
+        isAdmin() ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && existing().teacherId == request.auth.uid)
+      );
+      allow list: if false;
+      allow update: if false;
+
+      allow create: if isSignedIn() &&
+                    isValidOwnerRef(ownerRef) &&
+                    !exists(/databases/$(database)/documents/ownerLinks/$(ownerRef)) &&
+                    incoming().keys().hasAll(['ownerRef', 'teacherId', 'sessionId', 'createdAt']) &&
+                    incoming().keys().hasOnly(['ownerRef', 'teacherId', 'sessionId', 'createdAt']) &&
+                    incoming().ownerRef == ownerRef &&
+                    isValidId(incoming().sessionId) &&
+                    incoming().createdAt == request.time && (
+                      isAdmin() || (
+                        isRealUser() &&
+                        isTeacherActive(request.auth.uid) &&
+                        incoming().teacherId == request.auth.uid &&
+                        getAfter(/databases/$(database)/documents/sessions/$(incoming().sessionId)).data.teacherId == request.auth.uid &&
+                        getAfter(/databases/$(database)/documents/sessions/$(incoming().sessionId)).data.ownerRef == ownerRef
+                      )
+                    );
+    }
+
+    // ============================================
+    // COLLECTION 4: STUDENT SUBMISSIONS (OPTION A)
+    // ============================================
+    match /submissions/{submissionId} {
+
+      function isValidSubmission(data) {
+        return data.keys().hasAll(['studentName', 'studentAuthUid', 'answers', 'analysis', 'sessionId', 'ownerRef']) &&
+               !('trustedAnalysis' in data) &&
+               !('analysisStatus' in data) &&
+               data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 128 &&
+               isValidId(data.studentAuthUid) &&
+               data.answers is map &&
+               data.analysis is map &&
+               isValidId(data.sessionId) && data.sessionId.size() <= 64 &&
+               isValidOwnerRef(data.ownerRef) &&
+               (!('id' in data) || (data.id is string && data.id.size() <= 200)) &&
+               (!('teacherId' in data) || (data.teacherId is string && data.teacherId.size() <= 128)) &&
+               (!('teacherEmail' in data) || (data.teacherEmail is string && data.teacherEmail.size() <= 200)) &&
+               (!('teacherNotes' in data) || (data.teacherNotes is string && data.teacherNotes.size() <= 2000)) &&
+               (!('overriddenClassification' in data) || data.overriddenClassification == null || (data.overriddenClassification is string && data.overriddenClassification.size() <= 100)) &&
+               (!('deliveryReceiptId' in data) || (data.deliveryReceiptId is string && data.deliveryReceiptId.size() <= 64)) &&
+               (!('deliveredAt' in data) || (data.deliveredAt is string && data.deliveredAt.size() <= 40)) &&
+               (!('institution' in data) || (data.institution is string && data.institution.size() <= 200)) &&
+               (!('level' in data) || (data.level is string && data.level.size() <= 100)) &&
+               (!('stream' in data) || (data.stream is string && data.stream.size() <= 100)) &&
+               (!('classNumber' in data) || (data.classNumber is string && data.classNumber.size() <= 40)) &&
+               (!('reliabilityIndex' in data) || (data.reliabilityIndex is int && data.reliabilityIndex >= 0 && data.reliabilityIndex <= 100));
+      }
+
+      allow create: if isSignedIn() && isValidId(submissionId) && isValidSubmission(incoming()) && (
+        isAdmin() || (
+          isStudentAnon() &&
+          submissionId == (incoming().sessionId + '_' + request.auth.uid) &&
+          incoming().studentAuthUid == request.auth.uid &&
+          incoming().submittedAt == request.time &&
+          !('teacherId' in incoming()) &&
+          !('teacherEmail' in incoming()) &&
+          exists(/databases/$(database)/documents/publicSessions/$(incoming().sessionId)) &&
+          get(/databases/$(database)/documents/publicSessions/$(incoming().sessionId)).data.isActive == true &&
+          incoming().ownerRef == get(/databases/$(database)/documents/publicSessions/$(incoming().sessionId)).data.ownerRef
+        ) || (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          'teacherId' in incoming() &&
+          incoming().teacherId == request.auth.uid &&
+          incoming().cloudSyncedAt == request.time
+        )
+      );
+
+      allow get: if isValidId(submissionId) && isSignedIn() && (
+        isAdmin() ||
+        (isStudentAnon() && existing().studentAuthUid == request.auth.uid) ||
+        (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          (
+            ('teacherId' in existing() && existing().teacherId == request.auth.uid) ||
+            get(/databases/$(database)/documents/sessions/$(existing().sessionId)).data.teacherId == request.auth.uid
+          )
+        )
+      );
+
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          (
+            ('teacherId' in resource.data && resource.data.teacherId == request.auth.uid) ||
+            get(/databases/$(database)/documents/sessions/$(resource.data.sessionId)).data.teacherId == request.auth.uid
+          )
+        )
+      );
+
+      allow update: if isValidId(submissionId) && isSignedIn() && isValidSubmission(incoming()) && (
+        isAdmin() || (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          (
+            ('teacherId' in existing() && existing().teacherId == request.auth.uid) ||
+            get(/databases/$(database)/documents/sessions/$(existing().sessionId)).data.teacherId == request.auth.uid
+          ) &&
+          incoming().sessionId == existing().sessionId &&
+          incoming().ownerRef == existing().ownerRef &&
+          incoming().studentAuthUid == existing().studentAuthUid &&
+          incoming().cloudSyncedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'teacherNotes', 'overriddenClassification', 'deliveryReceiptId',
+            'deliveredAt', 'cloudSyncedAt', 'studentName'
+          ])
+        )
+      );
+
+      allow delete: if isValidId(submissionId) && isSignedIn() && (
+        isAdmin() || (
+          isRealUser() &&
+          isTeacherActive(request.auth.uid) &&
+          (
+            ('teacherId' in existing() && existing().teacherId == request.auth.uid) ||
+            get(/databases/$(database)/documents/sessions/$(existing().sessionId)).data.teacherId == request.auth.uid
+          )
+        )
+      );
+    }
+
+    // ============================================
+    // COLLECTION 5: QUESTIONNAIRE FORMS & TEMPLATES
+    // ============================================
+    match /forms/{formId} {
+
+      function isValidForm(data) {
+        return data.keys().hasAll(['formId', 'title', 'teacherId', 'status', 'isTemplate']) &&
+               isValidId(data.formId) &&
+               data.title is string && data.title.size() <= 200 &&
+               isValidId(data.teacherId) &&
+               data.isTemplate is bool &&
+               data.status in ['saved', 'published', 'ready'] &&
+               (!('teacherEmail' in data) || (data.teacherEmail is string && data.teacherEmail.size() <= 200)) &&
+               (!('questions' in data) || data.questions is list);
+      }
+
+      allow get: if isValidId(formId) && (
+        existing().isTemplate == true ||
+        (isSignedIn() && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && existing().teacherId == request.auth.uid)))
+      );
+
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.isTemplate == true ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && resource.data.teacherId == request.auth.uid)
+      );
+
+      allow create: if isSignedIn() && isValidId(formId) && isValidForm(incoming()) &&
+                    incoming().formId == formId && (
+                      isAdmin() || (
+                        isRealUser() &&
+                        isTeacherActive(request.auth.uid) &&
+                        incoming().teacherId == request.auth.uid &&
+                        incoming().isTemplate == false &&
+                        incoming().createdAt == request.time &&
+                        incoming().updatedAt == request.time
+                      )
+                    );
+
+      allow update: if isSignedIn() && isValidId(formId) && isValidForm(incoming()) &&
+                    incoming().formId == existing().formId &&
+                    incoming().teacherId == existing().teacherId && (
+                      isAdmin() || (
+                        isRealUser() &&
+                        isTeacherActive(request.auth.uid) &&
+                        existing().teacherId == request.auth.uid &&
+                        incoming().isTemplate == existing().isTemplate &&
+                        incoming().createdAt == existing().createdAt &&
+                        incoming().updatedAt == request.time &&
+                        incoming().diff(existing()).affectedKeys().hasOnly([
+                          'title', 'description', 'questions', 'status', 'updatedAt',
+                          'level', 'stream', 'classNumber', 'lessonTopic', 'pedagogicalGoal'
+                        ])
+                      )
+                    );
+
+      allow delete: if isSignedIn() && isValidId(formId) && (
+        isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && existing().teacherId == request.auth.uid)
+      );
+    }
+
+    // ============================================
+    // COLLECTION 6: REPORTS (AUTH TEACHERS/ADMIN ONLY + STRICT imageUrl)
+    // ============================================
+    match /reports/{reportId} {
+      function isValidReport(data) {
+        return data.keys().hasAll(['id', 'reporterUid', 'description', 'status', 'createdAt']) &&
+               data.keys().hasOnly([
+                 'id', 'reporterUid', 'reporterName', 'reporterEmail', 'sessionId',
+                 'category', 'description', 'imageUrl', 'status', 'createdAt'
+               ]) &&
+               isValidId(data.id) &&
+               data.id == reportId &&
+               isValidId(data.reporterUid) &&
+               data.description is string && data.description.size() >= 3 && data.description.size() <= 3000 &&
+               data.status == 'pending' &&
+               (!('reporterName' in data) || (data.reporterName is string && data.reporterName.size() <= 200)) &&
+               (!('reporterEmail' in data) || (data.reporterEmail is string && data.reporterEmail.size() <= 200)) &&
+               (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+               (!('sessionId' in data) || data.sessionId == null || data.sessionId == '' || isValidId(data.sessionId)) &&
+               (!('imageUrl' in data) || isValidImageUrl(data.imageUrl)) &&
+               data.createdAt == request.time;
+      }
+
+      allow get, list: if isSignedIn() && (
+        isAdmin() ||
+        (isRealUser() && isTeacherActive(request.auth.uid) && resource.data.reporterUid == request.auth.uid)
+      );
+
+      allow create: if isSignedIn() && isValidId(reportId) &&
+                    isRealUser() &&
+                    (isAdmin() || isTeacherActive(request.auth.uid)) &&
+                    isValidReport(incoming()) &&
+                    incoming().reporterUid == request.auth.uid && (
+                      !('sessionId' in incoming()) ||
+                      incoming().sessionId == null ||
+                      incoming().sessionId == '' ||
+                      isAdmin() ||
+                      get(/databases/$(database)/documents/sessions/$(incoming().sessionId)).data.teacherId == request.auth.uid
+                    );
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION 7: PUBLIC LANDING CONFIG & PLATFORM STATS
+    // ============================================
+    match /config/{configId} {
+      allow get: if configId == 'landingPage';
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /stats/{statId} {
+      function isValidStats(data) {
+        return data.keys().hasAll(['teachersCount', 'schoolsCount', 'sessionsCount', 'submissionsCount', 'studentsCount', 'updatedAt']) &&
+               data.keys().hasOnly(['teachersCount', 'schoolsCount', 'sessionsCount', 'submissionsCount', 'studentsCount', 'updatedAt']) &&
+               data.teachersCount is int && data.teachersCount >= 0 &&
+               data.schoolsCount is int && data.schoolsCount >= 0 &&
+               data.sessionsCount is int && data.sessionsCount >= 0 &&
+               data.submissionsCount is int && data.submissionsCount >= 0 &&
+               data.studentsCount is int && data.studentsCount >= 0 &&
+               data.updatedAt is string && data.updatedAt.size() <= 40;
+      }
+
+      allow get: if statId == 'public';
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(statId) && isValidStats(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION 8: MIGRATION ORPHANS (ADMIN ONLY)
+    // ============================================
+    match /migrationOrphans/{orphanId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION 9: TEACHER NOTIFICATIONS & SETTINGS
+    // ============================================
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /notificationSettings/{settingId} {
+        function isValidNotificationSettings(data) {
+          return data.keys().hasAll([
+                   'teacherId', 'teacherEmail', 'consentAccepted', 'disableAllExternal',
+                   'channels', 'emailConfig', 'whatsappConfig', 'messageTypes', 'updatedAt'
+                 ]) &&
+                 data.keys().hasOnly([
+                   'teacherId', 'teacherEmail', 'consentAccepted', 'consentTimestamp',
+                   'disableAllExternal', 'channels', 'emailConfig', 'whatsappConfig',
+                   'messageTypes', 'updatedAt'
+                 ]) &&
+                 isValidId(data.teacherId) &&
+                 data.teacherEmail is string && data.teacherEmail.size() <= 200 &&
+                 data.consentAccepted is bool &&
+                 (!('consentTimestamp' in data) || data.consentTimestamp == null || (data.consentTimestamp is string && data.consentTimestamp.size() <= 40)) &&
+                 data.disableAllExternal is bool &&
+                 data.channels is map &&
+                 data.channels.keys().hasAll(['inApp', 'email', 'whatsapp']) &&
+                 data.channels.keys().hasOnly(['inApp', 'email', 'whatsapp']) &&
+                 data.channels.inApp is bool &&
+                 data.channels.email is bool &&
+                 data.channels.whatsapp is bool &&
+                 data.emailConfig is map &&
+                 data.emailConfig.keys().hasAll(['address', 'verified']) &&
+                 data.emailConfig.keys().hasOnly(['address', 'verified', 'lastTestAt']) &&
+                 data.emailConfig.address is string && data.emailConfig.address.size() <= 200 &&
+                 data.emailConfig.verified is bool &&
+                 data.whatsappConfig is map &&
+                 data.whatsappConfig.keys().hasAll(['countryCode', 'phoneNumber', 'e164Phone', 'consentAccepted', 'verified']) &&
+                 data.whatsappConfig.keys().hasOnly(['countryCode', 'phoneNumber', 'e164Phone', 'consentAccepted', 'consentTimestamp', 'verified', 'lastTestAt']) &&
+                 data.whatsappConfig.countryCode is string && data.whatsappConfig.countryCode.size() <= 10 &&
+                 data.whatsappConfig.phoneNumber is string && data.whatsappConfig.phoneNumber.size() <= 24 &&
+                 data.whatsappConfig.e164Phone is string && data.whatsappConfig.e164Phone.size() <= 32 &&
+                 data.whatsappConfig.consentAccepted is bool &&
+                 data.whatsappConfig.verified is bool &&
+                 data.messageTypes is map &&
+                 data.messageTypes.keys().hasAll(['classAlerts', 'studentAlerts', 'aiRecommendations', 'sessionSummaries']) &&
+                 data.messageTypes.keys().hasOnly(['classAlerts', 'studentAlerts', 'aiRecommendations', 'sessionSummaries']) &&
+                 data.messageTypes.classAlerts is bool &&
+                 data.messageTypes.studentAlerts is bool &&
+                 data.messageTypes.aiRecommendations is bool &&
+                 data.messageTypes.sessionSummaries is bool &&
+                 data.updatedAt is string && data.updatedAt.size() <= 40;
+        }
+
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(settingId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+        allow list: if isSignedIn() && isValidId(userId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(settingId) &&
+                      isValidNotificationSettings(incoming()) && (
+                        isAdmin() || (
+                          isRealUser() &&
+                          isTeacherActive(request.auth.uid) &&
+                          request.auth.uid == userId &&
+                          incoming().teacherId == request.auth.uid
+                        )
+                      );
+
+        allow update: if isSignedIn() && isValidId(userId) && isValidId(settingId) &&
+                      isValidNotificationSettings(incoming()) && (
+                        isAdmin() || (
+                          isRealUser() &&
+                          isTeacherActive(request.auth.uid) &&
+                          request.auth.uid == userId &&
+                          incoming().teacherId == existing().teacherId &&
+                          incoming().teacherId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'consentAccepted', 'consentTimestamp', 'disableAllExternal',
+                            'channels', 'emailConfig', 'whatsappConfig', 'messageTypes', 'updatedAt'
+                          ])
+                        )
+                      );
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(settingId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+      }
+
+      match /notifications/{notificationId} {
+        function isValidPedagogicalNotification(data) {
+          return data.keys().hasAll([
+                   'id', 'teacherId', 'teacherEmail', 'title', 'indicatorType',
+                   'indicatorLabel', 'category', 'sessionId', 'sessionTitle',
+                   'classNameLabel', 'gradeLevel', 'summary', 'priority',
+                   'recommendation', 'reportPath', 'isRead', 'createdAt'
+                 ]) &&
+                 data.keys().hasOnly([
+                   'id', 'teacherId', 'teacherEmail', 'title', 'indicatorType',
+                   'indicatorLabel', 'category', 'sessionId', 'sessionTitle',
+                   'classNameLabel', 'gradeLevel', 'summary', 'priority',
+                   'recommendation', 'reportPath', 'studentRefId',
+                   'submissionCountAtTrigger', 'isRead', 'readAt', 'deliveryLog', 'createdAt'
+                 ]) &&
+                 isValidId(data.id) &&
+                 isValidId(data.teacherId) &&
+                 data.teacherEmail is string && data.teacherEmail.size() <= 200 &&
+                 data.title is string && data.title.size() <= 240 &&
+                 data.indicatorType in [
+                   'critical_thinking_difficulty', 'argumentation_weakness',
+                   'cognitive_fear_elevation', 'low_curiosity_readiness',
+                   'class_level_disparity', 'individual_follow_up'
+                 ] &&
+                 data.indicatorLabel is string && data.indicatorLabel.size() <= 160 &&
+                 data.category in ['class_alert', 'student_alert', 'ai_recommendation'] &&
+                 isValidId(data.sessionId) &&
+                 data.sessionTitle is string && data.sessionTitle.size() <= 200 &&
+                 data.classNameLabel is string && data.classNameLabel.size() <= 120 &&
+                 data.gradeLevel is string && data.gradeLevel.size() <= 120 &&
+                 data.summary is string && data.summary.size() <= 800 &&
+                 data.priority in ['عادي', 'مهم', 'مرتفع'] &&
+                 data.recommendation is string && data.recommendation.size() <= 600 &&
+                 data.reportPath is string && data.reportPath.size() <= 260 &&
+                 (!('studentRefId' in data) || (data.studentRefId is string && data.studentRefId.size() <= 128)) &&
+                 (!('submissionCountAtTrigger' in data) || (data.submissionCountAtTrigger is int && data.submissionCountAtTrigger >= 0)) &&
+                 data.isRead is bool &&
+                 (!('readAt' in data) || data.readAt == null || (data.readAt is string && data.readAt.size() <= 40)) &&
+                 data.createdAt is string && data.createdAt.size() <= 40;
+        }
+
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(notificationId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+        allow list: if isSignedIn() && isValidId(userId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(notificationId) &&
+                      isValidPedagogicalNotification(incoming()) && (
+                        isAdmin() || (
+                          isRealUser() &&
+                          isTeacherActive(request.auth.uid) &&
+                          request.auth.uid == userId &&
+                          incoming().teacherId == request.auth.uid
+                        )
+                      );
+
+        allow update: if isSignedIn() && isValidId(userId) && isValidId(notificationId) &&
+                      isValidPedagogicalNotification(incoming()) && (
+                        isAdmin() || (
+                          isRealUser() &&
+                          isTeacherActive(request.auth.uid) &&
+                          request.auth.uid == userId &&
+                          incoming().teacherId == existing().teacherId &&
+                          incoming().createdAt == existing().createdAt &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'readAt'])
+                        )
+                      );
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(notificationId) && (isAdmin() || (isRealUser() && isTeacherActive(request.auth.uid) && request.auth.uid == userId));
+      }
+    }
+  }
+}

@@ -34,10 +34,12 @@ import {
   AlertCircle,
   BarChart3,
   PieChart as PieChartIcon,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
-import { auth } from '../lib/firebase';
+import { auth, getTeacherRequestHeaders } from '../lib/firebase';
 import { subscribeSessionSubmissionsFirestore } from '../lib/firestoreSync';
-import { DiagnosticSession, StudentSubmission, ThinkingStyle } from '../types';
+import { AnalysisVerificationResponse, DiagnosticSession, StudentSubmission, ThinkingStyle } from '../types';
 
 interface AnalyticalReportProps {
   sessionId?: string;
@@ -118,6 +120,46 @@ export default function AnalyticalReport({
   const [chartMode, setChartMode] = useState<ChartMode>('bar');
   const [sortField, setSortField] = useState<SortField>('recent');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [verificationMap, setVerificationMap] = useState<Record<string, AnalysisVerificationResponse>>({});
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [verificationBanner, setVerificationBanner] = useState<AnalysisVerificationResponse | null>(null);
+
+  const handleVerifySignature = async (sub: StudentSubmission) => {
+    if (!sub?.id) return;
+    setVerifyingId(sub.id);
+    try {
+      const headers = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
+      const res = await fetch(`/api/submissions/${encodeURIComponent(sub.id)}/verify-analysis`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          submission: sub,
+          envelope: sub.signedEnvelope,
+        }),
+      });
+      const data = (await res.json()) as AnalysisVerificationResponse;
+      if (data && data.signatureIntegrity) {
+        setVerificationMap((prev) => ({ ...prev, [sub.id]: data }));
+        setVerificationBanner(data);
+      }
+    } catch {
+      setVerificationMap((prev) => ({
+        ...prev,
+        [sub.id]: {
+          valid: false,
+          signatureIntegrity: 'invalid',
+          analysisOrigin: 'unknown',
+          reason: 'تعذر الاتصال بخادم التحقق.',
+          contentTruthNote: 'التحقق يؤكد سلامة التوقيع فقط.',
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    } finally {
+      setVerifyingId(null);
+    }
+  };
 
   const activeSession = useMemo(() => {
     const target = activeSessionId.toUpperCase();
@@ -579,14 +621,14 @@ export default function AnalyticalReport({
 
             <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-slate-500 font-bold">
-                <span>متوسط الموثوقية</span>
+                <span>متوسط الموثوقية (استرشادي)</span>
                 <ShieldCheck className="w-4 h-4 text-slate-500" />
               </div>
               <p className="text-2xl font-black text-slate-900 font-mono tabular-nums">
                 {analytics.avgReliability}%
               </p>
               <p className="text-[11px] text-slate-500">
-                مؤشر نزاهة وجودة الاستجابات
+                مؤشر استرشادي للمراقبة فقط وليس حكماً تلقائياً
               </p>
             </div>
           </div>
@@ -812,6 +854,34 @@ export default function AnalyticalReport({
               </div>
             </div>
 
+            {verificationBanner && (
+              <div
+                className={`mx-4 sm:mx-5 mt-3 p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                  verificationBanner.valid
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}
+              >
+                <div className="space-y-0.5">
+                  <p className="font-black">
+                    {verificationBanner.valid
+                      ? `توقيع الخادم سليم (${verificationBanner.analysisOrigin})`
+                      : `نتيجة التحقق: ${verificationBanner.signatureIntegrity}${
+                          verificationBanner.reason ? ` — ${verificationBanner.reason}` : ''
+                        }`}
+                  </p>
+                  <p className="text-[11px] opacity-90">{verificationBanner.contentTruthNote}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setVerificationBanner(null)}
+                  className="text-[11px] font-bold underline shrink-0 cursor-pointer"
+                >
+                  إخفاء
+                </button>
+              </div>
+            )}
+
             {filteredRows.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500">
                 لا توجد نتائج مطابقة لمعايير البحث أو الفلترة الحالية.
@@ -888,14 +958,14 @@ export default function AnalyticalReport({
                           onClick={() => handleSort('reliability')}
                           className="inline-flex items-center gap-1 hover:text-slate-900 cursor-pointer"
                         >
-                          <span>الموثوقية</span>
+                          <span>الموثوقية (استرشادي)</span>
                           {sortField === 'reliability' && (
                             <span className="font-mono">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                           )}
                         </button>
                       </th>
                       <th className="py-3 px-4">التوصية التربوية</th>
-                      <th className="py-3 px-4 text-left">التفاصيل</th>
+                      <th className="py-3 px-4 text-left">سلامة التوقيع والمعاينة</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
@@ -958,16 +1028,57 @@ export default function AnalyticalReport({
                             </p>
                           </td>
                           <td className="py-3 px-4 text-left whitespace-nowrap">
-                            {onSelectStudent && (
-                              <button
-                                type="button"
-                                onClick={() => onSelectStudent(sub)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 transition-colors cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5 text-slate-500" />
-                                <span>معاينة</span>
-                              </button>
-                            )}
+                            <div className="inline-flex items-center gap-1.5">
+                              {!useSimulationData && (
+                                <button
+                                  type="button"
+                                  disabled={verifyingId === sub.id}
+                                  onClick={() => handleVerifySignature(sub)}
+                                  title={
+                                    verificationMap[sub.id]?.contentTruthNote ||
+                                    'تحقق تشفيري من سلامة التوقيع ومصدر التحليل دون حفظه في Firestore'
+                                  }
+                                  className={`inline-flex items-center gap-1 px-2 py-1.5 border rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                                    verificationMap[sub.id]?.valid
+                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                      : verificationMap[sub.id]
+                                      ? 'bg-rose-50 border-rose-200 text-rose-800'
+                                      : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  {verifyingId === sub.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : verificationMap[sub.id]?.valid ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                                  )}
+                                  <span>
+                                    {verificationMap[sub.id]?.valid
+                                      ? 'توقيع سليم'
+                                      : verificationMap[sub.id]?.signatureIntegrity === 'unsigned'
+                                      ? 'غير موقّع'
+                                      : verificationMap[sub.id]?.signatureIntegrity === 'tampered'
+                                      ? 'تم التلاعب'
+                                      : verificationMap[sub.id]?.signatureIntegrity === 'replayed'
+                                      ? 'معاد التشغيل'
+                                      : verificationMap[sub.id]
+                                      ? 'غير صالح'
+                                      : 'فحص التوقيع'}
+                                  </span>
+                                </button>
+                              )}
+                              {onSelectStudent && (
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectStudent(sub)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 transition-colors cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>معاينة</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

@@ -29,12 +29,26 @@ import {
   RefreshCw,
   Eye
 } from 'lucide-react';
-import { StudentAnswers, StudentSubmission, DiagnosticSession, ViolationRecord, FormQuestion } from '../types';
+import {
+  StudentAnswers,
+  StudentSubmission,
+  DiagnosticSession,
+  ViolationRecord,
+  FormQuestion,
+  ViolationEventRecord,
+} from '../types';
 import QuestionRenderer, { isQuestionAnswered } from './QuestionRenderer';
 import StudentSimulator from './StudentSimulator';
 import {
+  ensureStudentAnonymousAuth,
+  getAppCheckTokenHeader,
+  getStudentRequestHeaders,
+} from '../lib/firebase';
+import {
   createStudentSubmissionInFirestore,
   fetchSessionFromFirestore,
+  recordStudentViolationEventInFirestore,
+  syncStudentPresenceToFirestore,
 } from '../lib/firestoreSync';
 import {
   enqueueOfflineSubmission,
@@ -104,20 +118,37 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
 
     setRetryingQueue(true);
     try {
+      const reqHeaders = await getStudentRequestHeaders({
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      });
       for (const item of items) {
         try {
-          const res = await fetch('/api/student-submit', {
+          let res = await fetch('/api/student-submit', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            headers: reqHeaders,
             body: JSON.stringify({
               ...item.payload,
               clientSubmissionId: item.localQueueId,
               offlineRequeued: true,
             }),
           });
+          if (res.status === 404 && item.payload?.sessionId) {
+            res = await fetch('/api/submissions/analyze-public', {
+              method: 'POST',
+              headers: reqHeaders,
+              body: JSON.stringify({
+                ...item.payload,
+                clientSubmissionId: item.localQueueId,
+              }),
+            });
+          }
           if (res.ok) {
             const data = await res.json();
             await removePendingOfflineSubmission(item.localQueueId);
+            if (data?.submission) {
+              createStudentSubmissionInFirestore(data.submission).catch(() => {});
+            }
             if (!result && data?.submission) {
               setResult(data.submission);
               setOfflineSavedBanner(false);
@@ -196,12 +227,43 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
     return Math.max(0, score);
   };
 
+  const violationSeqRef = React.useRef(0);
+
+  const mapViolationEventType = (rawType: string): ViolationEventRecord['type'] => {
+    if (rawType.includes('تبويب') || rawType.includes('علامات')) return 'tab_switch';
+    if (rawType.includes('مغادرة') || rawType.includes('حدود') || rawType.includes('تصغير')) return 'window_blur';
+    if (rawType.includes('ملء الشاشة')) return 'fullscreen_exit';
+    if (rawType.includes('نسخ') || rawType.includes('لصق') || rawType.includes('اختصارات')) return 'copy_paste';
+    if (rawType.includes('توقف') || rawType.includes('خمول')) return 'idle_timeout';
+    if (rawType.includes('المطور') || rawType.includes('Inspect')) return 'devtools_suspect';
+    if (rawType.includes('تحميل')) return 'focus_lost';
+    return 'other';
+  };
+
   const syncMonitoringStatus = async (status: string, currentViolations = violations, currentReliability = reliabilityRef.current) => {
     if (!activeSession || !activeSession.supervisedMode || !studentName.trim()) return;
+    const totalViolCount = currentViolations.reduce((sum, v) => sum + (v.count || 1), 0);
+    const presenceStatus: 'active' | 'submitted' | 'away' | 'flagged' =
+      status.includes('أنهى')
+        ? 'submitted'
+        : status.includes('غادر') || status.includes('متوقف')
+        ? 'away'
+        : currentReliability < 60
+        ? 'flagged'
+        : 'active';
+
+    syncStudentPresenceToFirestore(activeSession.sessionId, {
+      studentLabel: studentName.trim(),
+      status: presenceStatus,
+      violationCount: totalViolCount,
+      currentQuestionIndex: step,
+    }).catch(() => {});
+
     try {
+      const headers = await getStudentRequestHeaders({ 'Content-Type': 'application/json' });
       await fetch(`/api/sessions/${activeSession.sessionId}/monitoring/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           studentName: studentName.trim(),
           status,
@@ -268,16 +330,20 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
     }
   }, [activeSession]);
 
-  // Periodic heartbeat sync (every 4 seconds)
+  // Event-first presence sync (step changes + low-frequency 45s fallback heartbeat to conserve Firestore quota)
   useEffect(() => {
     if (!monitoringActive || !activeSession || !activeSession.supervisedMode) return;
-    
+    syncMonitoringStatus('يجيب حالياً');
+
+    const HEARTBEAT_FALLBACK_MS = 45000;
     const interval = setInterval(() => {
-      syncMonitoringStatus('يجيب حالياً');
-    }, 4000);
+      if (document.visibilityState === 'visible') {
+        syncMonitoringStatus('يجيب حالياً');
+      }
+    }, HEARTBEAT_FALLBACK_MS);
 
     return () => clearInterval(interval);
-  }, [monitoringActive, activeSession, studentName, violations, reliabilityIndex]);
+  }, [monitoringActive, activeSession, studentName, step]);
 
   const supportsFullscreen = typeof document !== 'undefined' && !!(
     document.documentElement.requestFullscreen ||
@@ -322,8 +388,15 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
       sessionStorage.setItem(`violations_${activeSession.sessionId}`, JSON.stringify(updated));
       sessionStorage.setItem(`reliability_${activeSession.sessionId}`, newScore.toString());
 
-      // Dispatch status heartbeat
+      // Dispatch status heartbeat + bounded immutable advisory violation event in Firestore (1..50)
       syncMonitoringStatus('يجيب حالياً', updated, newScore);
+      if (violationSeqRef.current < 50) {
+        violationSeqRef.current += 1;
+        recordStudentViolationEventInFirestore(activeSession.sessionId, violationSeqRef.current, {
+          type: mapViolationEventType(type),
+          details: type,
+        }).catch(() => {});
+      }
 
       // Flash Alert warning
       const arabicRules: Record<string, string> = {
@@ -671,7 +744,11 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
       if (!trimmed) {
         throw new Error('يرجى إدخال رمز الجلسة لحضور التشخيص.');
       }
-      const response = await fetch(`/api/sessions/${trimmed}`);
+      ensureStudentAnonymousAuth().catch(() => null);
+      const appCheckHeaders = await getAppCheckTokenHeader(true);
+      const response = await fetch(`/api/sessions/${trimmed}`, {
+        headers: appCheckHeaders,
+      });
       let data: any = null;
       try {
         data = await response.json();
@@ -1025,25 +1102,64 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
     };
 
     try {
+      const reqHeaders = await getStudentRequestHeaders({
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      });
       const response = await fetch('/api/student-submit', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
+        headers: reqHeaders,
         body: JSON.stringify(payload)
       });
 
       let data;
-      try {
-        data = await response.json();
-      } catch (jsonErr: any) {
-        throw new Error(`فشل في قراءة استجابة الخادم (HTTP ${response.status}). التفاصيل: ${jsonErr.message}`);
-      }
+      if (response.status === 404) {
+        // Fallback for cold containers where session metadata resides in Firestore publicSessions
+        const fallbackRes = await fetch('/api/submissions/analyze-public', {
+          method: 'POST',
+          headers: reqHeaders,
+          body: JSON.stringify({
+            ...payload,
+            institution: activeSession.institution,
+            level: activeSession.level,
+            stream: activeSession.stream,
+            classNumber: activeSession.classNumber,
+          }),
+        });
+        const fallbackJson = await fallbackRes.json();
+        if (!fallbackRes.ok) {
+          throw new Error(fallbackJson.error || 'فشلت عملية التحليل الموقّع على الخادم.');
+        }
+        data = {
+          submission: fallbackJson.submission || {
+            id: fallbackJson.signedEnvelope?.submissionId || clientSubmissionId,
+            studentName: studentName.trim(),
+            sessionId: activeSession.sessionId.trim(),
+            answers: payload.answers,
+            analysis: fallbackJson.analysis,
+            signedEnvelope: fallbackJson.signedEnvelope,
+            reliabilityIndex: payload.reliabilityIndex,
+            violations: payload.violations,
+            institution: activeSession.institution,
+            level: activeSession.level,
+            stream: activeSession.stream,
+            classNumber: activeSession.classNumber,
+            deliveryReceiptId: fallbackJson.deliveryReceiptId,
+            deliveredAt: fallbackJson.deliveredAt,
+            submittedAt: fallbackJson.deliveredAt || new Date().toISOString(),
+          },
+        };
+      } else {
+        try {
+          data = await response.json();
+        } catch (jsonErr: any) {
+          throw new Error(`فشل في قراءة استجابة الخادم (HTTP ${response.status}). التفاصيل: ${jsonErr.message}`);
+        }
 
-      if (!response.ok) {
-        const errorMsg = data.error || 'فشلت عملية الحفظ والتحليل الذكي.';
-        throw new Error(errorMsg);
+        if (!response.ok) {
+          const errorMsg = data.error || 'فشلت عملية الحفظ والتحليل الذكي.';
+          throw new Error(errorMsg);
+        }
       }
 
       // Submission success -> clear active storage to prevent leakage
@@ -1063,6 +1179,14 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
       setOfflineSavedBanner(false);
       setResult(data.submission);
       setShowSuccessAlert(true);
+      if (activeSession.supervisedMode) {
+        syncStudentPresenceToFirestore(activeSession.sessionId, {
+          studentLabel: studentName.trim(),
+          status: 'submitted',
+          violationCount: violations.reduce((sum, v) => sum + (v.count || 1), 0),
+          currentQuestionIndex: maxStep,
+        }).catch(() => {});
+      }
       if (data?.submission) {
         createStudentSubmissionInFirestore(data.submission).catch(() => {});
       }
@@ -1923,7 +2047,7 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-xs text-slate-300">مؤشر موثوقية النزاهة البيداغوجي:</span>
+                      <span className="font-extrabold text-xs text-slate-300">مؤشر موثوقية النزاهة البيداغوجي (استرشادي فقط):</span>
                       <span className={`text-sm font-black px-2.5 py-0.5 rounded-lg ${
                         reliabilityIndex >= 85 
                           ? 'bg-emerald-500/10 text-emerald-400' 
@@ -1936,10 +2060,10 @@ export default function StudentForm({ currentSessionId, onBackToHome }: StudentF
                     </div>
                     <p className="text-[11px] text-slate-400 font-bold mt-1 max-w-xl">
                       {reliabilityIndex >= 85 
-                        ? '🟢 نزاهة تربوية ممتازة. إجاباتك الفكرية متسقة ومحل ثقة تامة لدى أستاذك الموجه.' 
+                        ? '🟢 مؤشر استرشادي ممتاز — يظهر انتظام جلسة الإجابة دون تشتيت متصفح.' 
                         : reliabilityIndex >= 55 
-                        ? '🟡 انتباه: تم تسجيل بعض المخالفات بخصوص مغادرة النافذة أو استخدام لوحة المفاتيح. يرجى التركيز لتقييم مستواك الفعلي.' 
-                        : '🔴 تحذير بيداغوجي شديد: مؤشر الموثوقية منخفض للغاية! سيتم تصنيف تقريرك كغير موثوق للأستاذ.'}
+                        ? '🟡 مؤشر استرشادي: تم رصد تنقلات أو اختصارات في المتصفح (للمراجعة التربوية فقط).' 
+                        : '🔴 تنبيه استرشادي للأستاذ: كثرة الخروج أو النسخ قد تستدعي متابعة تربوية مباشرة (لا يُعد حكماً تلقائياً).'}
                     </p>
                   </div>
                 </div>

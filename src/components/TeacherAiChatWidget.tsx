@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Sparkles, AlertCircle, RefreshCw, GraduationCap, MinusCircle, CornerDownLeft } from 'lucide-react';
 import { StudentSubmission } from '../types';
 import PhiloScanLogo from './PhiloScanLogo';
+import { getTeacherRequestHeaders } from '../lib/firebase';
 
 interface TeacherAiChatWidgetProps {
   submissions: StudentSubmission[];
@@ -128,11 +129,12 @@ export const TeacherAiChatWidget: React.FC<TeacherAiChatWidgetProps> = ({
         text: m.text
       }));
 
+      const headers = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
       const res = await fetch('/api/ai/teacher-chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({
           messages: activeMessages,
           sessionInfo: sessionInfo

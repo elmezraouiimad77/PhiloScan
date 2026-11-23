@@ -18,29 +18,36 @@ import type {
   TeacherNotificationSettings,
 } from '../types';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const NOTIFICATION_SETTINGS_FILE = path.join(DATA_DIR, 'notification_settings.json');
-const NOTIFICATIONS_FILE = path.join(DATA_DIR, 'notifications.json');
+function getDataDir(): string {
+  return process.env.PHILOSCAN_DATA_DIR
+    ? path.resolve(process.env.PHILOSCAN_DATA_DIR)
+    : path.join(process.cwd(), 'data');
+}
+const getNotificationSettingsFile = () => path.join(getDataDir(), 'notification_settings.json');
+const getNotificationsFile = () => path.join(getDataDir(), 'notifications.json');
 
 let settingsWriteQueue: Promise<any> = Promise.resolve();
 let notificationsWriteQueue: Promise<any> = Promise.resolve();
 
 function ensureNotificationStorage() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  const dir = getDataDir();
+  const settingsFile = getNotificationSettingsFile();
+  const notifsFile = getNotificationsFile();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  if (!fs.existsSync(NOTIFICATION_SETTINGS_FILE)) {
-    fs.writeFileSync(NOTIFICATION_SETTINGS_FILE, JSON.stringify([], null, 2), 'utf-8');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(settingsFile, JSON.stringify([], null, 2), 'utf-8');
   }
-  if (!fs.existsSync(NOTIFICATIONS_FILE)) {
-    fs.writeFileSync(NOTIFICATIONS_FILE, JSON.stringify([], null, 2), 'utf-8');
+  if (!fs.existsSync(notifsFile)) {
+    fs.writeFileSync(notifsFile, JSON.stringify([], null, 2), 'utf-8');
   }
 }
 
 export async function loadNotificationSettingsList(): Promise<TeacherNotificationSettings[]> {
   ensureNotificationStorage();
   try {
-    const raw = await fs.promises.readFile(NOTIFICATION_SETTINGS_FILE, 'utf-8');
+    const raw = await fs.promises.readFile(getNotificationSettingsFile(), 'utf-8');
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -53,9 +60,10 @@ export async function saveNotificationSettingsList(list: TeacherNotificationSett
   ensureNotificationStorage();
   const next = settingsWriteQueue
     .then(async () => {
-      const tmp = NOTIFICATION_SETTINGS_FILE + '.tmp';
+      const target = getNotificationSettingsFile();
+      const tmp = target + '.tmp';
       await fs.promises.writeFile(tmp, JSON.stringify(list, null, 2), 'utf-8');
-      await fs.promises.rename(tmp, NOTIFICATION_SETTINGS_FILE);
+      await fs.promises.rename(tmp, target);
     })
     .catch((err) => {
       console.error('Recovered notification settings write error:', err);
@@ -67,7 +75,7 @@ export async function saveNotificationSettingsList(list: TeacherNotificationSett
 export async function loadNotificationsList(): Promise<PedagogicalNotification[]> {
   ensureNotificationStorage();
   try {
-    const raw = await fs.promises.readFile(NOTIFICATIONS_FILE, 'utf-8');
+    const raw = await fs.promises.readFile(getNotificationsFile(), 'utf-8');
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -80,9 +88,10 @@ export async function saveNotificationsList(list: PedagogicalNotification[]): Pr
   ensureNotificationStorage();
   const next = notificationsWriteQueue
     .then(async () => {
-      const tmp = NOTIFICATIONS_FILE + '.tmp';
+      const target = getNotificationsFile();
+      const tmp = target + '.tmp';
       await fs.promises.writeFile(tmp, JSON.stringify(list, null, 2), 'utf-8');
-      await fs.promises.rename(tmp, NOTIFICATIONS_FILE);
+      await fs.promises.rename(tmp, target);
     })
     .catch((err) => {
       console.error('Recovered notifications write error:', err);
@@ -213,6 +222,9 @@ export function getNotificationProviderStatus(): NotificationProviderStatus {
       activeProvider,
       resendConfigured,
       smtpConfigured,
+      renderSmtpBlockedNote: smtpConfigured && !resendConfigured
+        ? 'تنبيه: خطة Render Free تحجب منافذ SMTP (25/465/587)؛ يوصى بتفعيل Resend عبر HTTPS (RESEND_API_KEY).'
+        : undefined,
       statusLabel: emailConfigured
         ? `مفعلة (${activeProvider === 'resend' ? 'Resend API' : 'خادم SMTP'})`
         : 'غير مفعلة — تحتاج إلى إعداد تقني على الخادم',

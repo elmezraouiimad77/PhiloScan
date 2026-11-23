@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { auth } from '../lib/firebase';
+import { auth, getTeacherRequestHeaders } from '../lib/firebase';
 import {
   computeSyncDiff,
   getLocalSubmissions,
@@ -154,12 +154,12 @@ export const DataSyncHub: React.FC<DataSyncHubProps> = ({
         getPendingOfflineSubmissions(),
       ]);
 
+      const reconcileHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/sync/reconcile', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + (teacherSession?.token || ''),
-        },
+        headers: reconcileHeaders,
         body: JSON.stringify({
           email: teacherEmail,
           role: teacherSession?.role || 'teacher',
@@ -249,12 +249,12 @@ export const DataSyncHub: React.FC<DataSyncHubProps> = ({
       setCloudSubs(remoteSubs);
 
       if (remoteSubs.length > 0 || remoteSessions.length > 0 || remoteForms.length > 0) {
+        const pullHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+          'Content-Type': 'application/json',
+        });
         const res = await fetch('/api/sync/reconcile', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + (teacherSession?.token || ''),
-          },
+          headers: pullHeaders,
           body: JSON.stringify({
             email: teacherEmail,
             role: teacherSession?.role || 'teacher',

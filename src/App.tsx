@@ -46,6 +46,7 @@ import PhiloScanLogo from './components/PhiloScanLogo';
 import AboutPlatform from './components/AboutPlatform';
 import AdminLogin from './components/AdminLogin';
 import LandingPage from './components/LandingPage';
+import { getTeacherRequestHeaders } from './lib/firebase';
 
 type ViewState = 'home' | 'form' | 'teacher' | 'about' | 'admin';
 
@@ -83,7 +84,12 @@ export default function App() {
     if (sessionStr) {
       try {
         const session = JSON.parse(sessionStr);
-        return !!(session && (session.role === 'admin' || session.email === 'phillofikr@gmail.com'));
+        return !!(
+          session &&
+          typeof session.token === 'string' &&
+          session.token.trim().length > 0 &&
+          (session.role === 'admin' || session.email === 'phillofikr@gmail.com')
+        );
       } catch (e) {
         return false;
       }
@@ -132,13 +138,22 @@ export default function App() {
       setReportError('يرجى ملء جميع الحقول المطلوبة.');
       return;
     }
+    if (reportImageBase64 && reportImageBase64.length > 250000) {
+      setReportError('حجم الصورة المرفقة يتجاوز الحد المسموح (250 كيلوبايت). يرجى اختيار صورة أصغر.');
+      return;
+    }
     setIsSubmittingReport(true);
     setReportError(null);
 
     try {
+      const headers = await getTeacherRequestHeaders(undefined, { 'Content-Type': 'application/json' });
+      if (!headers['Authorization'] && !headers['x-firebase-id-token']) {
+        throw new Error('يرجى تسجيل الدخول في فضاء الأستاذ أو الإدارة أولاً لإرسال البلاغ بأمان.');
+      }
+
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           senderName: reportForm.name,
           email: reportForm.email,
@@ -170,17 +185,51 @@ export default function App() {
 
   const handleReportImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        showAppToast('حجم الملف كبير جداً! يرجى اختيار لقطة شاشة بحجم يقل عن 2 ميغابايت.', 'error');
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showAppToast('يرجى اختيار ملف صورة صالح (PNG أو JPEG أو WebP).', 'error');
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      showAppToast('حجم الملف كبير جداً! يرجى اختيار لقطة شاشة بحجم يقل عن 4 ميغابايت.', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const rawDataUrl = String(reader.result || '');
+      if (/^data:image\/(png|jpeg|webp);base64,/i.test(rawDataUrl) && rawDataUrl.length <= 240000) {
+        setReportImageBase64(rawDataUrl);
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setReportImageBase64(reader.result as string);
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1280;
+        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          showAppToast('تعذر ضغط الصورة في المتصفح.', 'error');
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        let compressed = canvas.toDataURL('image/jpeg', 0.78);
+        if (compressed.length > 240000) {
+          compressed = canvas.toDataURL('image/jpeg', 0.55);
+        }
+        if (compressed.length > 248000) {
+          showAppToast('الصورة كبيرة جداً بعد الضغط، يرجى اختيار صورة أبعادها أصغر.', 'error');
+          return;
+        }
+        setReportImageBase64(compressed);
       };
-      reader.readAsDataURL(file);
-    }
+      img.onerror = () => {
+        showAppToast('تعذر قراءة الصورة المختارة.', 'error');
+      };
+      img.src = rawDataUrl;
+    };
+    reader.readAsDataURL(file);
   };
 
   // Sync state with url hash and path changes for robust routing

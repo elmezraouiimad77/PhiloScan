@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { ShieldCheck, Mail, Lock, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
 import PhiloScanLogo from './PhiloScanLogo';
 import { TeacherSession } from '../types';
+import { auth, getAppCheckTokenHeader } from '../lib/firebase';
 
 interface AdminLoginProps {
   onLoginSuccess: (session: TeacherSession) => void;
@@ -35,15 +36,19 @@ export default function AdminLogin({ onLoginSuccess, onBackToHome }: AdminLoginP
     setLoading(true);
 
     try {
+      const appCheckHeaders = await getAppCheckTokenHeader(false);
+      const firebaseIdToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
       const response = await fetch('/api/teacher/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...appCheckHeaders,
         },
         body: JSON.stringify({
           email: trimmedEmail,
           adminSecret: trimmedCode,
           role: 'admin',
+          ...(firebaseIdToken ? { firebaseIdToken } : {}),
         }),
       });
 

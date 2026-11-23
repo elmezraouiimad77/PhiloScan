@@ -16,13 +16,24 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import {
+  auth,
+  db,
+  ensureStudentAnonymousAuth,
+  generateOwnerRef,
+  handleFirestoreError,
+  OperationType,
+  studentAuth,
+  studentDb,
+} from './firebase';
 import {
   DiagnosticSession,
   PedagogicalNotification,
   StudentSubmission,
   TeacherNotificationSettings,
+  ViolationEventRecord,
 } from '../types';
 
 function sanitizeId(raw: string): string {
@@ -30,8 +41,66 @@ function sanitizeId(raw: string): string {
 }
 
 /**
- * Mirrors a diagnostic session document to Firestore using authenticated UID
- * and serverTimestamp() to satisfy temporal integrity rules.
+ * Ensures a verified Firebase user has a valid /teachers/{uid} profile adhering to strict self-registration rules.
+ */
+export async function ensureTeacherProfileInFirestore(profile: {
+  fullName?: string;
+  school?: string;
+  regionalAcademy?: string;
+  province?: string;
+  specialty?: string;
+  yearsOfExperience?: string | number;
+}): Promise<{ exists: boolean; isDisabled: boolean; role: string }> {
+  const user = auth.currentUser;
+  if (!user || user.isAnonymous || !user.emailVerified || !user.email) {
+    return { exists: false, isDisabled: false, role: 'teacher' };
+  }
+
+  try {
+    const teacherRef = doc(db, 'teachers', user.uid);
+    const snap = await getDoc(teacherRef);
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      return {
+        exists: true,
+        isDisabled: Boolean(data.isDisabled),
+        role: String(data.role || 'teacher'),
+      };
+    }
+
+    const parsedYears =
+      profile.yearsOfExperience !== undefined && profile.yearsOfExperience !== ''
+        ? Math.max(0, Math.min(80, Math.round(Number(profile.yearsOfExperience) || 0)))
+        : undefined;
+
+    const payload: Record<string, any> = {
+      uid: user.uid,
+      email: user.email.toLowerCase().trim(),
+      fullName: String(profile.fullName || user.displayName || user.email.split('@')[0]).slice(0, 256),
+      role: 'teacher',
+      isDisabled: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    if (profile.school) payload.school = String(profile.school).slice(0, 256);
+    if (profile.regionalAcademy) payload.regionalAcademy = String(profile.regionalAcademy).slice(0, 256);
+    if (profile.province) payload.province = String(profile.province).slice(0, 128);
+    if (profile.specialty) payload.specialty = String(profile.specialty).slice(0, 128);
+    if (parsedYears !== undefined && !Number.isNaN(parsedYears)) payload.yearsExperience = parsedYears;
+
+    await setDoc(teacherRef, payload);
+    return { exists: true, isDisabled: false, role: 'teacher' };
+  } catch (err: any) {
+    console.warn('Firestore teacher profile registration warning:', err?.message || err);
+    return { exists: false, isDisabled: false, role: 'teacher' };
+  }
+}
+
+/**
+ * Mirrors a diagnostic session document atomically across:
+ * 1) sessions/{sessionId} (private to owner teacher & admin)
+ * 2) publicSessions/{sessionId} (sanitized public metadata with ownerRef, zero PII)
+ * 3) ownerLinks/{ownerRef} (mapping ownerRef -> teacherId + sessionId on creation)
  */
 export async function syncSessionToFirestore(session: DiagnosticSession): Promise<boolean> {
   const user = auth.currentUser;
@@ -40,17 +109,29 @@ export async function syncSessionToFirestore(session: DiagnosticSession): Promis
   const cleanId = sanitizeId(session.sessionId);
 
   try {
-    const docRef = doc(db, 'sessions', cleanId);
-    const existingSnap = await getDoc(docRef);
-    const basePayload: Record<string, any> = {
+    const sessionRef = doc(db, 'sessions', cleanId);
+    const publicRef = doc(db, 'publicSessions', cleanId);
+    const existingSnap = await getDoc(sessionRef);
+    const existingOwnerRef = existingSnap.exists() ? (existingSnap.data() as any)?.ownerRef : undefined;
+    const ownerRef =
+      typeof existingOwnerRef === 'string' && /^own_[a-f0-9]{32}$/.test(existingOwnerRef)
+        ? existingOwnerRef
+        : typeof session.ownerRef === 'string' && /^own_[a-f0-9]{32}$/.test(session.ownerRef)
+        ? session.ownerRef
+        : generateOwnerRef();
+
+    const batch = writeBatch(db);
+
+    const privatePayload: Record<string, any> = {
       sessionId: cleanId,
+      ownerRef,
       teacherId: user.uid,
       teacherEmail: (session.teacherEmail || user.email || '').toLowerCase().trim(),
       institution: (session.institution || '').slice(0, 200),
       level: (session.level || '').slice(0, 100),
       stream: (session.stream || '').slice(0, 100),
       class: String(session.classNumber || '1').slice(0, 120),
-      classNumber: String(session.classNumber || '1').slice(0, 120),
+      classNumber: String(session.classNumber || '1').slice(0, 40),
       title: (session.title || '').slice(0, 200),
       province: (session.province || '').slice(0, 120),
       isActive: !session.isFrozen,
@@ -59,10 +140,44 @@ export async function syncSessionToFirestore(session: DiagnosticSession): Promis
       formTitle: (session.formTitle || '').slice(0, 200),
       updatedAt: serverTimestamp(),
     };
-    if (!existingSnap.exists()) {
-      basePayload.createdAt = serverTimestamp();
+    if (session.customWeights && typeof session.customWeights === 'object') {
+      privatePayload.customWeights = session.customWeights;
     }
-    await setDoc(docRef, basePayload, { merge: true });
+
+    const publicPayload: Record<string, any> = {
+      sessionId: cleanId,
+      ownerRef,
+      title: (session.title || '').slice(0, 200),
+      institution: (session.institution || '').slice(0, 200),
+      level: (session.level || '').slice(0, 100),
+      stream: (session.stream || '').slice(0, 100),
+      class: String(session.classNumber || '1').slice(0, 120),
+      classNumber: String(session.classNumber || '1').slice(0, 40),
+      province: (session.province || '').slice(0, 120),
+      isActive: !session.isFrozen,
+      supervisedMode: Boolean(session.supervisedMode),
+      formId: (session.formId || 'official-perceptions').slice(0, 120),
+      formTitle: (session.formTitle || '').slice(0, 200),
+      updatedAt: serverTimestamp(),
+    };
+
+    if (!existingSnap.exists()) {
+      privatePayload.createdAt = serverTimestamp();
+      publicPayload.createdAt = serverTimestamp();
+      batch.set(sessionRef, privatePayload);
+      batch.set(publicRef, publicPayload);
+      batch.set(doc(db, 'ownerLinks', ownerRef), {
+        ownerRef,
+        teacherId: user.uid,
+        sessionId: cleanId,
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      batch.set(sessionRef, privatePayload, { merge: true });
+      batch.set(publicRef, publicPayload, { merge: true });
+    }
+
+    await batch.commit();
     return true;
   } catch (error: any) {
     console.warn('Firestore session mirror warning:', error?.message || error);
@@ -72,6 +187,7 @@ export async function syncSessionToFirestore(session: DiagnosticSession): Promis
 
 /**
  * Mirrors a submission document to Firestore when the teacher is signed into Firebase Auth.
+ * Under Option A, trustedAnalysis and analysisStatus are NEVER persisted to Firestore.
  */
 export async function syncSubmissionToFirestore(submission: StudentSubmission): Promise<boolean> {
   const user = auth.currentUser;
@@ -84,29 +200,65 @@ export async function syncSubmissionToFirestore(submission: StudentSubmission): 
   try {
     const docRef = doc(db, 'submissions', cleanSubId);
     const existingSnap = await getDoc(docRef);
-    const payload: Record<string, any> = {
+
+    if (existingSnap.exists()) {
+      const updatePayload: Record<string, any> = {
+        studentName: (submission.studentName || submission.student_name || 'تلميذ').slice(0, 128),
+        teacherNotes: (submission.teacherNotes || '').slice(0, 2000),
+        overriddenClassification: submission.overriddenClassification || null,
+        deliveryReceiptId: (submission.deliveryReceiptId || '').slice(0, 64),
+        deliveredAt: String(submission.deliveredAt || submission.submittedAt || new Date().toISOString()).slice(0, 40),
+        cloudSyncedAt: serverTimestamp(),
+      };
+      await updateDoc(docRef, updatePayload);
+      return true;
+    }
+
+    let resolvedOwnerRef =
+      typeof submission.ownerRef === 'string' && /^own_[a-f0-9]{32}$/.test(submission.ownerRef)
+        ? submission.ownerRef
+        : '';
+    if (!resolvedOwnerRef) {
+      const sessSnap = await getDoc(doc(db, 'sessions', cleanSessionId)).catch(() => null);
+      const pubSnap = !sessSnap?.exists()
+        ? await getDoc(doc(db, 'publicSessions', cleanSessionId)).catch(() => null)
+        : null;
+      const fromDoc = (sessSnap?.data() as any)?.ownerRef || (pubSnap?.data() as any)?.ownerRef;
+      resolvedOwnerRef =
+        typeof fromDoc === 'string' && /^own_[a-f0-9]{32}$/.test(fromDoc)
+          ? fromDoc
+          : generateOwnerRef();
+    }
+
+    const studentAuthUid = sanitizeId(submission.studentAuthUid || user.uid);
+    const createPayload: Record<string, any> = {
+      id: cleanSubId,
+      sessionId: cleanSessionId.slice(0, 64),
+      ownerRef: resolvedOwnerRef,
+      studentAuthUid,
       studentName: (submission.studentName || submission.student_name || 'تلميذ').slice(0, 128),
+      teacherId: user.uid,
       teacherEmail: (submission.teacherEmail || submission.teacher_email || user.email || '').toLowerCase().trim(),
       answers: submission.answers || submission.responses || {},
       analysis: submission.analysis || {},
+      ...(submission.signedEnvelope ? { signedEnvelope: submission.signedEnvelope } : {}),
       teacherNotes: (submission.teacherNotes || '').slice(0, 2000),
       overriddenClassification: submission.overriddenClassification || null,
       deliveryReceiptId: (submission.deliveryReceiptId || '').slice(0, 64),
-      deliveredAt: submission.deliveredAt || submission.submittedAt || new Date().toISOString(),
-      reliabilityIndex: typeof submission.reliabilityIndex === 'number' ? submission.reliabilityIndex : 100,
+      deliveredAt: String(submission.deliveredAt || submission.submittedAt || new Date().toISOString()).slice(0, 40),
+      reliabilityIndex:
+        typeof submission.reliabilityIndex === 'number'
+          ? Math.max(0, Math.min(100, Math.round(submission.reliabilityIndex)))
+          : 100,
       institution: (submission.institution || '').slice(0, 200),
       level: (submission.level || '').slice(0, 100),
       stream: (submission.stream || '').slice(0, 100),
       classNumber: String(submission.classNumber || submission.class || '').slice(0, 40),
+      submittedAt: submission.submittedAt || new Date().toISOString(),
       cloudSyncedAt: serverTimestamp(),
     };
-    if (!existingSnap.exists()) {
-      payload.id = cleanSubId;
-      payload.sessionId = cleanSessionId.slice(0, 20);
-      payload.teacherId = user.uid;
-      payload.submittedAt = submission.submittedAt || new Date().toISOString();
-    }
-    await setDoc(docRef, payload, { merge: true });
+
+    await setDoc(docRef, createPayload);
     return true;
   } catch (error: any) {
     if (String(error?.message || '').includes('Missing or insufficient permissions')) {
@@ -237,7 +389,7 @@ export function subscribeSessionSubmissionsFirestore(
   const isAllSessions = !normalizedSession || normalizedSession.toLowerCase() === 'all';
   const cleanSessionId = isAllSessions
     ? ''
-    : sanitizeId(normalizedSession.toUpperCase()).slice(0, 20);
+    : sanitizeId(normalizedSession.toUpperCase()).slice(0, 64);
   const isVerifiedAdmin =
     user.emailVerified && user.email?.toLowerCase() === 'phillofikr@gmail.com';
 
@@ -305,8 +457,8 @@ export function subscribeSessionSubmissionsFirestore(
 }
 
 /**
- * Resolves a single diagnostic session directly from Firestore (public read by sessionId)
- * as a resilient fallback when a Cloud Run container cold-starts.
+ * Resolves a single sanitized public session directly from publicSessions/{sessionId}
+ * (fallback to private sessions/{sessionId} only if an authenticated owner/admin is signed in).
  */
 export async function fetchSessionFromFirestore(
   sessionId: string
@@ -314,15 +466,30 @@ export async function fetchSessionFromFirestore(
   const cleanId = sanitizeId((sessionId || '').toUpperCase().trim());
   if (!cleanId) return null;
   try {
-    const snap = await getDoc(doc(db, 'sessions', cleanId));
-    if (!snap.exists()) return null;
-    const data = snap.data() as any;
-    return {
-      ...data,
-      sessionId: data.sessionId || cleanId,
-      classNumber: data.classNumber || data.class || '1',
-      isFrozen: data.isActive === false,
-    } as DiagnosticSession;
+    const publicSnap = await getDoc(doc(studentDb, 'publicSessions', cleanId));
+    if (publicSnap.exists()) {
+      const data = publicSnap.data() as any;
+      return {
+        ...data,
+        sessionId: data.sessionId || cleanId,
+        classNumber: data.classNumber || data.class || '1',
+        isFrozen: data.isActive === false,
+      } as DiagnosticSession;
+    }
+
+    if (auth.currentUser) {
+      const privateSnap = await getDoc(doc(db, 'sessions', cleanId));
+      if (privateSnap.exists()) {
+        const data = privateSnap.data() as any;
+        return {
+          ...data,
+          sessionId: data.sessionId || cleanId,
+          classNumber: data.classNumber || data.class || '1',
+          isFrozen: data.isActive === false,
+        } as DiagnosticSession;
+      }
+    }
+    return null;
   } catch (error: any) {
     console.warn('Firestore session lookup warning:', error?.message || error);
     return null;
@@ -330,54 +497,124 @@ export async function fetchSessionFromFirestore(
 }
 
 /**
- * Persists an unauthenticated student submission to Firestore using serverTimestamp()
- * and the Firestore session document's authoritative teacherId so security rules pass.
+ * Syncs student live presence in sessions/{sessionId}/presence/{studentUid} (event-first / fallback).
+ */
+export async function syncStudentPresenceToFirestore(
+  sessionId: string,
+  presence: {
+    studentLabel?: string;
+    status: 'active' | 'submitted' | 'away' | 'flagged';
+    violationCount?: number;
+    currentQuestionIndex?: number;
+  }
+): Promise<boolean> {
+  const cleanSessionId = sanitizeId((sessionId || '').toUpperCase().trim());
+  if (!cleanSessionId) return false;
+  try {
+    const user = studentAuth.currentUser || (await ensureStudentAnonymousAuth());
+    if (!user) return false;
+
+    const payload: Record<string, any> = {
+      sessionId: cleanSessionId,
+      studentAuthUid: user.uid,
+      status: presence.status,
+      lastHeartbeatAt: serverTimestamp(),
+    };
+    if (presence.studentLabel) {
+      payload.studentLabel = String(presence.studentLabel).slice(0, 128);
+    }
+    if (typeof presence.violationCount === 'number') {
+      payload.violationCount = Math.max(0, Math.min(50, Math.round(presence.violationCount)));
+    }
+    if (typeof presence.currentQuestionIndex === 'number') {
+      payload.currentQuestionIndex = Math.max(0, Math.min(100, Math.round(presence.currentQuestionIndex)));
+    }
+    await setDoc(doc(studentDb, 'sessions', cleanSessionId, 'presence', user.uid), payload, { merge: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Records an immutable advisory violation event in sessions/{sessionId}/violationEvents/{uid}_{seq} (seq 1..50).
+ */
+export async function recordStudentViolationEventInFirestore(
+  sessionId: string,
+  seq: number,
+  event: Pick<ViolationEventRecord, 'type' | 'details'>
+): Promise<boolean> {
+  const cleanSessionId = sanitizeId((sessionId || '').toUpperCase().trim());
+  const boundedSeq = Math.max(1, Math.min(50, Math.round(seq)));
+  if (!cleanSessionId || seq < 1 || seq > 50) return false;
+  try {
+    const user = studentAuth.currentUser || (await ensureStudentAnonymousAuth());
+    if (!user) return false;
+    const eventId = `${user.uid}_${boundedSeq}`;
+    await setDoc(doc(studentDb, 'sessions', cleanSessionId, 'violationEvents', eventId), {
+      seq: boundedSeq,
+      studentAuthUid: user.uid,
+      sessionId: cleanSessionId,
+      type: event.type,
+      ...(event.details ? { details: String(event.details).slice(0, 400) } : {}),
+      advisoryOnly: true,
+      occurredAt: serverTimestamp(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persists an anonymous-authenticated student submission to Firestore using deterministic ID:
+ * submissions/{sessionId}_{studentAuthUid} and ownerRef from publicSessions/{sessionId}.
+ * Under Option A, zero PII (teacherId/teacherEmail) and zero server-trust fields (trustedAnalysis/analysisStatus) are written.
  */
 export async function createStudentSubmissionInFirestore(
   submission: StudentSubmission
 ): Promise<boolean> {
-  const cleanSubId = sanitizeId(submission.id);
   const cleanSessionId = sanitizeId(
     (submission.sessionId || submission.session_id || '').toUpperCase().trim()
   );
-  if (!cleanSubId || !cleanSessionId) return false;
+  if (!cleanSessionId) return false;
 
   try {
-    const sessionSnap = await getDoc(doc(db, 'sessions', cleanSessionId));
-    if (!sessionSnap.exists()) return false;
-    const sessionData = sessionSnap.data() as any;
-    if (sessionData.isActive === false || !sessionData.teacherId) return false;
+    const user = studentAuth.currentUser || (await ensureStudentAnonymousAuth());
+    if (!user) return false;
 
-    await setDoc(doc(db, 'submissions', cleanSubId), {
-      id: cleanSubId,
+    const pubSnap = await getDoc(doc(studentDb, 'publicSessions', cleanSessionId));
+    if (!pubSnap.exists()) return false;
+    const pubData = pubSnap.data() as any;
+    if (pubData.isActive === false || !pubData.ownerRef) return false;
+
+    const deterministicId = `${cleanSessionId}_${user.uid}`;
+    const cleanPayload: Record<string, any> = {
+      id: deterministicId,
+      studentAuthUid: user.uid,
       studentName: (submission.studentName || submission.student_name || 'تلميذ').slice(0, 128),
-      sessionId: cleanSessionId.slice(0, 20),
-      teacherId: String(sessionData.teacherId).slice(0, 128),
-      teacherEmail: (
-        submission.teacherEmail ||
-        submission.teacher_email ||
-        sessionData.teacherEmail ||
-        ''
-      )
-        .toLowerCase()
-        .trim(),
+      sessionId: cleanSessionId.slice(0, 64),
+      ownerRef: String(pubData.ownerRef),
       answers: submission.answers || submission.responses || {},
       analysis: submission.analysis || {},
+      ...(submission.signedEnvelope ? { signedEnvelope: submission.signedEnvelope } : {}),
       teacherNotes: '',
       deliveryReceiptId: (submission.deliveryReceiptId || '').slice(0, 64),
-      deliveredAt: submission.deliveredAt || submission.submittedAt || new Date().toISOString(),
+      deliveredAt: String(submission.deliveredAt || submission.submittedAt || new Date().toISOString()).slice(0, 40),
       reliabilityIndex:
         typeof submission.reliabilityIndex === 'number'
           ? Math.max(0, Math.min(100, Math.round(submission.reliabilityIndex)))
           : 100,
-      institution: (submission.institution || sessionData.institution || '').slice(0, 200),
-      level: (submission.level || sessionData.level || '').slice(0, 100),
-      stream: (submission.stream || sessionData.stream || '').slice(0, 100),
+      institution: (submission.institution || pubData.institution || '').slice(0, 200),
+      level: (submission.level || pubData.level || '').slice(0, 100),
+      stream: (submission.stream || pubData.stream || '').slice(0, 100),
       classNumber: String(
-        submission.classNumber || submission.class || sessionData.classNumber || ''
+        submission.classNumber || submission.class || pubData.classNumber || ''
       ).slice(0, 40),
       submittedAt: serverTimestamp(),
-    });
+    };
+
+    await setDoc(doc(studentDb, 'submissions', deterministicId), cleanPayload);
     return true;
   } catch (error: any) {
     console.warn('Firestore student submission backup warning:', error?.message || error);
@@ -386,21 +623,32 @@ export async function createStudentSubmissionInFirestore(
 }
 
 /**
- * Fetches custom forms owned by the signed-in teacher from Firestore.
+ * Fetches official template forms + custom forms owned by the signed-in teacher
+ * using two explicit security-rule-compliant queries instead of 'in' operator.
  */
-export async function fetchFormsFromFirestore(teacherEmail?: string): Promise<any[]> {
+export async function fetchFormsFromFirestore(_teacherEmail?: string): Promise<any[]> {
   const user = auth.currentUser;
   if (!user) return [];
-  const email = (user.email || teacherEmail || '').trim().toLowerCase();
-  if (!email) return [];
 
   try {
-    const q = query(
-      collection(db, 'forms'),
-      where('teacherEmail', 'in', [email, 'phillofikr@gmail.com'])
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ ...d.data(), formId: (d.data() as any).formId || d.id }));
+    const [templatesSnap, ownedSnap] = await Promise.all([
+      getDocs(query(collection(db, 'forms'), where('isTemplate', '==', true))).catch(() => null),
+      getDocs(query(collection(db, 'forms'), where('teacherId', '==', user.uid))).catch(() => null),
+    ]);
+
+    const merged = new Map<string, any>();
+    templatesSnap?.docs.forEach((d) => {
+      const data = d.data() as any;
+      const fid = data.formId || d.id;
+      merged.set(fid, { ...data, formId: fid });
+    });
+    ownedSnap?.docs.forEach((d) => {
+      const data = d.data() as any;
+      const fid = data.formId || d.id;
+      merged.set(fid, { ...data, formId: fid });
+    });
+
+    return Array.from(merged.values());
   } catch (error: any) {
     console.warn('Firestore forms fetch warning:', error?.message || error);
     return [];

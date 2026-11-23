@@ -44,16 +44,15 @@ import {
   Wand2,
 } from 'lucide-react';
 import {
-  collection,
   deleteDoc,
   doc,
-  getDocs,
-  query,
+  getDoc,
+  serverTimestamp,
   setDoc,
-  where,
+  updateDoc,
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
-import { syncSessionToFirestore } from '../lib/firestoreSync';
+import { db, auth, getTeacherRequestHeaders } from '../lib/firebase';
+import { fetchFormsFromFirestore, syncSessionToFirestore } from '../lib/firestoreSync';
 import {
   clearFormDraftLocal,
   FormBuilderDraft,
@@ -1088,7 +1087,10 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
       const mergedMap = new Map<string, FormDocument>();
 
       try {
-        const res = await fetch(`/api/forms?email=${encodeURIComponent(teacherSession.email)}`);
+        const headers = await getTeacherRequestHeaders();
+        const res = await fetch(`/api/forms?email=${encodeURIComponent(teacherSession.email)}`, {
+          headers,
+        });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.forms)) {
@@ -1103,17 +1105,14 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
 
       if (auth.currentUser) {
         try {
-          const fsEmail = (auth.currentUser.email || teacherSession.email || '').toLowerCase().trim();
-          const q = query(
-            collection(db, 'forms'),
-            where('teacherEmail', 'in', [fsEmail, 'phillofikr@gmail.com'])
-          );
           const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('Firestore read timeout')), 3000)
           );
-          const querySnapshot = await Promise.race([getDocs(q), timeoutPromise]);
-          querySnapshot.forEach((docSnap) => {
-            const fData = { ...docSnap.data() } as FormDocument;
+          const fsForms = await Promise.race([
+            fetchFormsFromFirestore(teacherSession.email),
+            timeoutPromise,
+          ]);
+          fsForms.forEach((fData: FormDocument) => {
             if (fData?.formId) mergedMap.set(fData.formId, fData);
           });
         } catch (fsErr) {
@@ -1229,18 +1228,50 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
     };
 
     try {
+      const formHeaders = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
       const apiRes = await fetch('/api/forms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: formHeaders,
         body: JSON.stringify(formPayload),
       });
 
       if (auth.currentUser) {
         try {
-          await Promise.race([
-            setDoc(doc(db, 'forms', fid), formPayload),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore save timeout')), 3000)),
+          const formDocRef = doc(db, 'forms', fid);
+          const existingDoc = await Promise.race([
+            getDoc(formDocRef),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore read timeout')), 2500)),
           ]);
+          if (existingDoc.exists()) {
+            await Promise.race([
+              updateDoc(formDocRef, {
+                title: formPayload.title,
+                description: formPayload.description,
+                questions: formPayload.questions,
+                status: formPayload.status,
+                level: formPayload.level,
+                stream: formPayload.stream,
+                classNumber: formPayload.classNumber,
+                lessonTopic: formPayload.lessonTopic,
+                pedagogicalGoal: formPayload.pedagogicalGoal,
+                updatedAt: serverTimestamp(),
+              }),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore save timeout')), 3000)),
+            ]);
+          } else {
+            await Promise.race([
+              setDoc(formDocRef, {
+                ...formPayload,
+                teacherId: auth.currentUser.uid,
+                isTemplate: false,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              }),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore save timeout')), 3000)),
+            ]);
+          }
         } catch (fsErr) {
           console.warn('Firestore form sync skipped (saved on server):', fsErr);
         }
@@ -1278,8 +1309,10 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
     const fid = confirmDeleteFormId;
     setConfirmDeleteFormId(null);
     try {
+      const delHeaders = await getTeacherRequestHeaders();
       await fetch(`/api/forms/${encodeURIComponent(fid)}`, {
         method: 'DELETE',
+        headers: delHeaders,
       });
       if (auth.currentUser) {
         try {
@@ -1525,9 +1558,12 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
     const mode = refineModes[q.id] || 'clarity';
     setRefiningQuestionId(q.id);
     try {
+      const refineHeaders = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/forms/refine-question', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: refineHeaders,
         body: JSON.stringify({
           question: q,
           topic: metaLessonTopic || formTitle || 'مفهوم الشخص والغير',
@@ -1616,9 +1652,12 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
     }, 2200);
 
     try {
+      const genHeaders = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/forms/generate-ai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: genHeaders,
         body: JSON.stringify({
           topic: aiTopic,
           level: aiLevel,
@@ -1936,9 +1975,12 @@ export default function FormBank({ teacherSession, onSessionCreated }: FormBankP
         supervisedMode: transferSessionForm.supervisedMode,
       };
 
+      const sessHeaders = await getTeacherRequestHeaders(undefined, {
+        'Content-Type': 'application/json',
+      });
       const res = await fetch('/api/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: sessHeaders,
         body: JSON.stringify(payload),
       });
       const data = await res.json();

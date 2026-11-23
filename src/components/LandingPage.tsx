@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { auth, db, getTeacherRequestHeaders } from '../lib/firebase';
 import WelcomeSection from './WelcomeSection';
 
 interface LandingPageProps {
@@ -149,19 +149,36 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
   const statsSectionRef = React.useRef<HTMLDivElement>(null);
   const [statsSectionInView, setStatsSectionInView] = useState(false);
 
-  // Authentication check for editing
+  // Authentication check for editing (requires valid token or verified Firebase Admin user)
   useEffect(() => {
-    const sessionStr = localStorage.getItem('philoscan_teacher_session');
-    if (sessionStr) {
-      try {
-        const session = JSON.parse(sessionStr);
-        if (session && (session.role === 'admin' || session.email === 'phillofikr@gmail.com')) {
-          setIsAdmin(true);
+    const checkLocalSession = () => {
+      const sessionStr = localStorage.getItem('philoscan_teacher_session');
+      if (sessionStr) {
+        try {
+          const session = JSON.parse(sessionStr);
+          if (
+            session &&
+            typeof session.token === 'string' &&
+            session.token.trim().length > 0 &&
+            (session.role === 'admin' || session.email === 'phillofikr@gmail.com')
+          ) {
+            setIsAdmin(true);
+            return;
+          }
+        } catch {
+          // ignore invalid cache
         }
-      } catch (e) {
-        setIsAdmin(false);
       }
-    }
+      const current = auth.currentUser;
+      setIsAdmin(
+        Boolean(current && current.emailVerified && current.email?.toLowerCase() === 'phillofikr@gmail.com')
+      );
+    };
+    checkLocalSession();
+    const unsub = auth.onAuthStateChanged(() => {
+      checkLocalSession();
+    });
+    return () => unsub();
   }, []);
 
   // Fetch configs & live statistics
@@ -282,7 +299,10 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
       const sessionStr = localStorage.getItem('philoscan_teacher_session') || '{}';
       const session = JSON.parse(sessionStr);
       const token = session.token || '';
-      if (!token) {
+      const headers = await getTeacherRequestHeaders(token, {
+        'Content-Type': 'application/json',
+      });
+      if (!headers['Authorization'] && !headers['x-firebase-id-token']) {
         onShowToast?.('انتهت صلاحية الجلسة الإدارية. يرجى إعادة تسجيل الدخول كمدير.');
         setIsSaving(false);
         return;
@@ -290,10 +310,7 @@ export default function LandingPage({ onNavigate, onShowToast }: LandingPageProp
 
       const res = await fetch('/api/landing-page', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers,
         body: JSON.stringify(editForm)
       });
 

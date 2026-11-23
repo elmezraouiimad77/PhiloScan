@@ -96,13 +96,82 @@ export interface ViolationRecord {
   count: number;
 }
 
+export interface SignedAnalysisEnvelope {
+  schemaVersion: number;
+  submissionId: string;
+  sessionId: string;
+  studentAuthUid: string;
+  answersHash: string;
+  analysisHash: string;
+  signedAt: string;
+  jti: string;
+  hmac: string;
+  analysisOrigin: 'gemini' | 'heuristic';
+  contentTruthDisclaimer?: string;
+}
+
+export interface AnalysisVerificationResponse {
+  valid: boolean;
+  signatureIntegrity: 'valid' | 'invalid' | 'tampered' | 'replayed' | 'expired' | 'unsigned';
+  analysisOrigin: 'gemini' | 'heuristic' | 'unknown';
+  reason?: string;
+  contentTruthNote: string;
+  checkedAt: string;
+  submissionId?: string;
+  sessionId?: string;
+  studentAuthUid?: string;
+  answersHashMatch?: boolean;
+  analysisHashMatch?: boolean;
+  replayed?: boolean;
+}
+
+export interface PublicSessionRecord {
+  sessionId: string;
+  ownerRef: string;
+  title?: string;
+  institution?: string;
+  level?: string;
+  stream?: string;
+  class: string;
+  classNumber?: string;
+  province?: string;
+  isActive: boolean;
+  supervisedMode?: boolean;
+  formId?: string;
+  formTitle?: string;
+  questions?: FormQuestion[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface OwnerLinkRecord {
+  ownerRef: string;
+  teacherId: string;
+  sessionId: string;
+  createdAt?: string;
+}
+
+export interface ViolationEventRecord {
+  seq: number;
+  studentAuthUid: string;
+  sessionId: string;
+  type: 'tab_switch' | 'window_blur' | 'fullscreen_exit' | 'copy_paste' | 'idle_timeout' | 'devtools_suspect' | 'focus_lost' | 'other';
+  details?: string;
+  advisoryOnly: true;
+  occurredAt?: string;
+}
+
 export interface StudentSubmission {
   id: string;
+  studentAuthUid?: string;
+  ownerRef?: string;
   studentName: string;
   student_name?: string; // snake_case compatibility
   answers: StudentAnswers;
   responses?: StudentAnswers; // alias for snake_case compatibility
   analysis: AIDiagnosisResult;
+  signedEnvelope?: SignedAnalysisEnvelope;
+  signatureIntegrity?: AnalysisVerificationResponse['signatureIntegrity'];
   teacherNotes?: string;            // ملاحظات إضافية للأستاذ
   overriddenClassification?: ThinkingStyle; // تعديل التصنيف من طرف الأستاذ
   submittedAt: string;
@@ -117,9 +186,10 @@ export interface StudentSubmission {
   localUpdatedAt?: string;
   cloudSyncedAt?: string;
 
-  // Supervision mode data
+  // Supervision mode data (strictly advisory)
   violations?: ViolationRecord[];
   reliabilityIndex?: number;
+  proctoringAdvisory?: boolean;
 
   // Multi-Teacher multi-tenant properties
   teacher_id?: string;
@@ -146,13 +216,17 @@ export interface GoogleSheetExportRecord {
 }
 
 export interface Teacher {
-  id: string; // e.g. TCH-001
+  id: string; // e.g. TCH-001 or Firebase UID
+  uid?: string;
   fullName: string;
   email: string;
   school: string;
   regionalAcademy: string;
   province: string;
   createdAt: string;
+  updatedAt?: string;
+  role?: 'teacher' | 'admin';
+  isDisabled?: boolean;
   specialty?: string;
   avatar?: string;
   yearsOfExperience?: string;
@@ -160,6 +234,7 @@ export interface Teacher {
 
 export interface DiagnosticSession {
   sessionId: string; // e.g. PS-8KX4Q2
+  ownerRef?: string;
   teacherId: string;
   teacherEmail: string;
   institution: string;
@@ -169,7 +244,9 @@ export interface DiagnosticSession {
   title: string; // e.g. تشخيص بداية السنة
   province: string; // e.g. العمالة أو الإقليم
   createdAt: string;
-  supervisedMode?: boolean; // الوضع التشخيصي المراقب
+  updatedAt?: string;
+  isActive?: boolean;
+  supervisedMode?: boolean; // الوضع التشخيصي المراقب (استرشادي فقط)
   isFrozen?: boolean; // تجميد الجلسة لمنع التلاميذ من إرسال إجابات جديدة
   formId?: string; // معرف استمارة التشخيص المتبعة
   formTitle?: string; // عنوان الاستمارة المربوطة بالجلسة
@@ -357,6 +434,7 @@ export interface NotificationProviderStatus {
     activeProvider: 'resend' | 'smtp' | 'none';
     resendConfigured: boolean;
     smtpConfigured: boolean;
+    renderSmtpBlockedNote?: string;
     statusLabel: string;
   };
   whatsapp: {

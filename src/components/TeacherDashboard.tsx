@@ -5,9 +5,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, db } from '../lib/firebase';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
+import { auth, db, getTeacherRequestHeaders } from '../lib/firebase';
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from 'firebase/auth';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import FormBank, { OFFICIAL_TEMPLATES } from './FormBank';
 import SearchableSelect from './SearchableSelect';
 import UserTutorial from './UserTutorial';
@@ -17,7 +23,7 @@ import AnalyticalReport from './AnalyticalReport';
 import DataSyncHub from './DataSyncHub';
 import PrintReportPortal from './PrintReportPortal';
 import TeacherNotificationsCenter from './TeacherNotificationsCenter';
-import type { PedagogicalNotification } from '../types';
+import type { AnalysisVerificationResponse, PedagogicalNotification } from '../types';
 import {
   saveLocalSubmissions,
   saveLocalSubmission,
@@ -27,6 +33,7 @@ import {
   getLocalSessions,
 } from '../lib/localStore';
 import {
+  ensureTeacherProfileInFirestore,
   syncSessionToFirestore,
   syncSubmissionToFirestore,
   subscribeTeacherSubmissionsFirestore,
@@ -515,6 +522,8 @@ import { TeacherAiChatWidget } from './TeacherAiChatWidget';
 
 export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps) {
   const [email, setEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [fullName, setFullName] = useState('');
   const [school, setSchool] = useState('');
   const [regionalAcademy, setRegionalAcademy] = useState('');
@@ -523,6 +532,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   const [specialty, setSpecialty] = useState('مادة الفلسفة');
   const [yearsOfExperience, setYearsOfExperience] = useState('');
   const [avatar, setAvatar] = useState('');
+  const [studentVerificationMap, setStudentVerificationMap] = useState<Record<string, AnalysisVerificationResponse>>({});
+  const [verifyingStudentId, setVerifyingStudentId] = useState<string | null>(null);
 
   // Dropdown search & Google simulation control states
   const [academySearch, setAcademySearch] = useState('');
@@ -625,13 +636,24 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         throw new Error('يرجى تسجيل الدخول باستخدام حساب البريد الإلكتروني المالي المرخص لمالك المنصة phillofikr@gmail.com.');
       }
 
-      // Step 2: Firestore Connect Handshake
+      // Step 2: Firestore Connect & Teacher Profile Registration
       setGoogleAuthLoadingState('firestore_connecting');
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (lowerEmail !== 'phillofikr@gmail.com') {
+        const profileState = await ensureTeacherProfileInFirestore({
+          fullName: user.displayName || nameVal || 'الأستاذ المفوّض الموجه',
+          school: school || undefined,
+          regionalAcademy: regionalAcademy || undefined,
+          province: province || undefined,
+          specialty: specialtyVal || specialty || 'مادة الفلسفة',
+          yearsOfExperience,
+        });
+        if (profileState.isDisabled) {
+          throw new Error('عذراً، هذا الحساب تم تعطيله مؤقتاً من قبل مالك المنصة.');
+        }
+      }
 
-      // Step 3: Firestore Database Sync & Write Row
+      // Step 3: Authenticated Session Handshake
       setGoogleAuthLoadingState('firestore_writing');
-      await new Promise((resolve) => setTimeout(resolve, 900));
 
       // Success setup
       setEmail(user.email);
@@ -651,19 +673,23 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             }
           : {
               email: lowerEmail,
+              firebaseIdToken,
               fullName: user.displayName || nameVal || 'الأستاذ المفوّض الموجه',
-              school: 'ثانوية ابن رشد التأهيلية',
-              regionalAcademy: 'الأكاديمية الجهوية للتربية والتكوين لجهة الدار البيضاء سطات',
-              province: 'عمالة الدار البيضاء',
+              school: school || 'ثانوية ابن رشد التأهيلية',
+              regionalAcademy: regionalAcademy || 'الأكاديمية الجهوية للتربية والتكوين لجهة الدار البيضاء سطات',
+              province: province || 'عمالة الدار البيضاء',
               role: 'teacher',
               specialty: specialtyVal || specialty || 'مادة الفلسفة',
               avatar: user.photoURL || avatarVal || '',
-              yearsOfExperience: '10'
+              yearsOfExperience: yearsOfExperience || '10'
             };
 
+        const loginHeaders = await getTeacherRequestHeaders(firebaseIdToken, {
+          'Content-Type': 'application/json',
+        });
         const response = await fetch('/api/teacher/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: loginHeaders,
           body: JSON.stringify(payload)
         });
         const data = await response.json();
@@ -799,23 +825,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     const saved = localStorage.getItem('philoscan_teacher_session');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.token === 'string' && parsed.token.trim().length > 0) {
+          return parsed;
+        }
       } catch (e) {
         return null;
       }
-    }
-    const legacyEmail = localStorage.getItem('philoscan_teacher_email');
-    if (legacyEmail) {
-      return {
-        email: legacyEmail,
-        fullName: 'الأستاذ الموجه',
-        school: 'ثانوية ابن رشد التأهيلية',
-        regionalAcademy: 'أكاديمية الدار البيضاء - سطات',
-        province: 'الدار البيضاء',
-        loggedInAt: new Date().toISOString(),
-        role: legacyEmail === 'phillofikr@gmail.com' ? 'admin' : 'teacher',
-        teacherId: legacyEmail === 'phillofikr@gmail.com' ? 'TCH-ADMIN' : 'TCH-DEMO'
-      };
     }
     return null;
   });
@@ -829,14 +845,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   const [userReports, setUserReports] = useState<any[]>([]);
   const [isLoadingReports, setIsLoadingReports] = useState<boolean>(false);
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
-  const [disabledTeacherIds, setDisabledTeacherIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('philoscan_disabled_teachers');
-      return saved ? JSON.parse(saved) : [];
-    } catch (_) {
-      return [];
-    }
-  });
+  const [disabledTeacherIds, setDisabledTeacherIds] = useState<string[]>([]);
   const [systemConfig, setSystemConfig] = useState({
     maintenanceMode: false,
     anonymousMode: false,
@@ -926,8 +935,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
   const handleToggleSupervisedMode = async (sessionId: string) => {
     try {
+      const headers = await getTeacherRequestHeaders(teacherSession?.token);
       const response = await fetch(`/api/sessions/${sessionId}/toggle-supervised`, {
-        method: 'POST'
+        method: 'POST',
+        headers,
       });
       if (!response.ok) throw new Error('فشل تعديل موضع المراقبة التدقيقية.');
       const data = await response.json();
@@ -948,8 +959,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
   const handleToggleFreezeSession = async (sessionId: string) => {
     try {
+      const headers = await getTeacherRequestHeaders(teacherSession?.token);
       const response = await fetch(`/api/sessions/${sessionId}/toggle-freeze`, {
-        method: 'POST'
+        method: 'POST',
+        headers,
       });
       if (!response.ok) throw new Error('فشل تعديل حالة تجميد الجلسة.');
       const data = await response.json();
@@ -968,7 +981,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     }
   };
 
-  // Poll proctoring data at interval of 2.2 seconds if watching active proctoring dashboard
+  // Poll proctoring data at balanced 15s interval when monitoring tab is active
   useEffect(() => {
     if (teacherActiveTab !== 'monitoring' || monitoringSubTab !== 'proctoring' || selectedSessionId === 'all') {
       setLiveProctoringData(null);
@@ -977,7 +990,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
     const pollLiveStats = async () => {
       try {
-        const response = await fetch(`/api/sessions/${selectedSessionId}/monitoring`);
+        const headers = await getTeacherRequestHeaders(teacherSession?.token);
+        const response = await fetch(`/api/sessions/${selectedSessionId}/monitoring`, { headers });
         if (response.ok) {
           const data = await response.json();
           setLiveProctoringData(data);
@@ -1109,9 +1123,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     };
 
     pollLiveStats(); // fetch first
-    const interval = setInterval(pollLiveStats, 2200);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        pollLiveStats();
+      }
+    }, 15000);
     return () => clearInterval(interval);
-  }, [teacherActiveTab, monitoringSubTab, selectedSessionId, trustAlertThreshold]);
+  }, [teacherActiveTab, monitoringSubTab, selectedSessionId, trustAlertThreshold, teacherSession?.token]);
 
   // Clean historical metrics stack on session rotation
   useEffect(() => {
@@ -1246,11 +1264,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     setProfileEditLoading(true);
     setProfileEditError(null);
     try {
+      const profileHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/teacher/profile', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: profileHeaders,
         body: JSON.stringify({
           email: teacherSession.email,
           ...profileEditForm
@@ -1637,12 +1656,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     if (!loggedInTeacher) return;
     try {
       const url = `/api/submissions?email=${encodeURIComponent(loggedInTeacher)}&role=${teacherSession?.role || 'teacher'}`;
+      const authHeaders = await getTeacherRequestHeaders(teacherSession?.token);
       const [serverResult, cachedLocal, cloudSubs] = await Promise.all([
-        fetch(url, {
-          headers: {
-            Authorization: 'Bearer ' + (teacherSession?.token || ''),
-          },
-        })
+        fetch(url, { headers: authHeaders })
           .then(async (res) => (res.ok ? ((await res.json()).submissions as StudentSubmission[]) || [] : null))
           .catch(() => null),
         getLocalSubmissions(loggedInTeacher).catch(() => [] as StudentSubmission[]),
@@ -1671,16 +1687,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''))
       );
 
-      // Re-hydrate fresh Cloud Run containers with any local/Firestore submissions missing on server
+      // Re-hydrate fresh containers with any local/Firestore submissions missing on server
       if (Array.isArray(serverResult)) {
         const missingOnServer = merged.filter((s) => s?.id && !serverIds.has(s.id));
         if (missingOnServer.length > 0) {
+          const syncHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+            'Content-Type': 'application/json',
+          });
           fetch('/api/sync/reconcile', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: 'Bearer ' + (teacherSession?.token || ''),
-            },
+            headers: syncHeaders,
             body: JSON.stringify({
               teacherEmail: loggedInTeacher,
               role: teacherSession?.role || 'teacher',
@@ -1719,12 +1735,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     if (!loggedInTeacher) return;
     try {
       const url = `/api/sessions?email=${encodeURIComponent(loggedInTeacher)}&role=${teacherSession?.role || 'teacher'}`;
+      const authHeaders = await getTeacherRequestHeaders(teacherSession?.token);
       const [serverSessions, cachedLocal, cloudSessions] = await Promise.all([
-        fetch(url, {
-          headers: {
-            Authorization: 'Bearer ' + (teacherSession?.token || ''),
-          },
-        })
+        fetch(url, { headers: authHeaders })
           .then(async (res) => (res.ok ? ((await res.json()).sessions as DiagnosticSession[]) || [] : null))
           .catch(() => null),
         getLocalSessions(loggedInTeacher).catch(() => [] as DiagnosticSession[]),
@@ -1754,19 +1767,19 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
       const mergedSessions = Array.from(mergedMap.values());
 
-      // Re-hydrate fresh Cloud Run container with local/Firestore sessions missing on server
+      // Re-hydrate fresh containers with local/Firestore sessions missing on server
       if (Array.isArray(serverSessions)) {
         const missingSessions = mergedSessions.filter((s) => {
           const key = String(s?.sessionId || '').toUpperCase().trim();
           return key && !serverKeys.has(key);
         });
         if (missingSessions.length > 0) {
+          const syncHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+            'Content-Type': 'application/json',
+          });
           fetch('/api/sync/reconcile', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: 'Bearer ' + (teacherSession?.token || ''),
-            },
+            headers: syncHeaders,
             body: JSON.stringify({
               teacherEmail: loggedInTeacher,
               role: teacherSession?.role || 'teacher',
@@ -1800,7 +1813,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
       // 1. Always load persisted custom forms from Express backend
       try {
-        const res = await fetch(`/api/forms?email=${encodeURIComponent(teacherSession.email)}`);
+        const formHeaders = await getTeacherRequestHeaders(teacherSession?.token);
+        const res = await fetch(`/api/forms?email=${encodeURIComponent(teacherSession.email)}`, {
+          headers: formHeaders,
+        });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.forms)) {
@@ -1835,12 +1851,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
             }
           });
           if (missingForms.length > 0) {
+            const syncHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+              'Content-Type': 'application/json',
+            });
             fetch('/api/sync/reconcile', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: 'Bearer ' + (teacherSession?.token || ''),
-              },
+              headers: syncHeaders,
               body: JSON.stringify({
                 teacherEmail: teacherSession.email,
                 role: teacherSession?.role || 'teacher',
@@ -1889,14 +1905,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   const fetchTeachersList = async () => {
     if (teacherSession?.role !== 'admin') return;
     try {
-      const response = await fetch(`/api/admin/teachers?role=admin`, {
-        headers: {
-          'Authorization': 'Bearer ' + (teacherSession?.token || '')
-        }
-      });
+      const headers = await getTeacherRequestHeaders(teacherSession?.token);
+      const response = await fetch(`/api/admin/teachers?role=admin`, { headers });
       if (response.ok) {
         const data = await response.json();
-        setTeachersList(data.teachers || []);
+        const list = data.teachers || [];
+        setTeachersList(list);
+        setDisabledTeacherIds(list.filter((t: any) => t.isDisabled).map((t: any) => t.id));
       }
     } catch (err) {
       console.warn('Silent/Transient background teachers list fetch check:', err);
@@ -1907,11 +1922,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     if (teacherSession?.role !== 'admin') return;
     setIsLoadingReports(true);
     try {
-      const response = await fetch(`/api/reports?role=admin`, {
-        headers: {
-          'Authorization': 'Bearer ' + (teacherSession?.token || '')
-        }
-      });
+      const headers = await getTeacherRequestHeaders(teacherSession?.token);
+      const response = await fetch(`/api/reports?role=admin`, { headers });
       if (response.ok) {
         const data = await response.json();
         setUserReports(data.reports || []);
@@ -1925,12 +1937,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
   const handleUpdateReportStatus = async (reportId: string, status: string) => {
     try {
+      const headers = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch(`/api/reports/${reportId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + (teacherSession?.token || '')
-        },
+        headers,
         body: JSON.stringify({
           role: 'admin',
           status
@@ -1961,17 +1973,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         fetchUserReports();
       }
 
-      // Real-time Server-Sent Events (SSE) stream for instant student-to-teacher arrival
-      let es: EventSource | null = null;
-      try {
-        const streamUrl = `/api/realtime/teacher-stream?email=${encodeURIComponent(loggedInTeacher)}&role=${encodeURIComponent(teacherSession?.role || 'teacher')}&admin_token=${encodeURIComponent(teacherSession?.token || '')}`;
-        es = new EventSource(streamUrl);
-        es.addEventListener('connected', () => {
-          setRealtimeStatus('connected');
-        });
-        es.addEventListener('submission:created', (evt: MessageEvent) => {
-          try {
-            const payload = JSON.parse(evt.data);
+      // Real-time Server-Sent Events (SSE) stream over authenticated fetch (zero tokens in URL)
+      const sseAbort = new AbortController();
+      const handleSseEvent = (eventType: string, rawData: string) => {
+        try {
+          if (eventType === 'connected') {
+            setRealtimeStatus('connected');
+            return;
+          }
+          const payload = JSON.parse(rawData);
+          if (eventType === 'submission:created') {
             const sub: StudentSubmission | undefined = payload?.submission;
             if (!sub || !sub.id) return;
             saveLocalSubmission(sub);
@@ -1980,35 +1991,17 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               notifyIncomingSubmission(sub);
               return [sub, ...prev];
             });
-          } catch {
-            // ignore malformed event
-          }
-        });
-        es.addEventListener('submission:updated', (evt: MessageEvent) => {
-          try {
-            const payload = JSON.parse(evt.data);
+          } else if (eventType === 'submission:updated') {
             const sub: StudentSubmission | undefined = payload?.submission;
             if (!sub || !sub.id) return;
             saveLocalSubmission(sub);
             setSubmissions((prev) => prev.map((x) => (x.id === sub.id ? sub : x)));
             setSelectedStudent((curr) => (curr?.id === sub.id ? sub : curr));
-          } catch {
-            // ignore
-          }
-        });
-        es.addEventListener('submission:deleted', (evt: MessageEvent) => {
-          try {
-            const payload = JSON.parse(evt.data);
+          } else if (eventType === 'submission:deleted') {
             if (!payload?.submissionId) return;
             deleteLocalSubmission(payload.submissionId);
             setSubmissions((prev) => prev.filter((x) => x.id !== payload.submissionId));
-          } catch {
-            // ignore
-          }
-        });
-        es.addEventListener('session:created', (evt: MessageEvent) => {
-          try {
-            const payload = JSON.parse(evt.data);
+          } else if (eventType === 'session:created') {
             const sess: DiagnosticSession | undefined = payload?.session;
             if (!sess?.sessionId) return;
             setSessions((prev) => {
@@ -2017,29 +2010,69 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
               saveLocalSessions(next);
               return next;
             });
-          } catch {
-            // ignore
-          }
-        });
-        es.addEventListener('notification:created', (evt: MessageEvent) => {
-          try {
-            const payload = JSON.parse(evt.data);
+          } else if (eventType === 'notification:created') {
             const notif: PedagogicalNotification | undefined = payload?.notification;
             if (!notif?.id) return;
             setLivePedagogicalNotif(notif);
             if (notif.deliveryLog?.inApp !== false) {
               setPedagogicalUnreadCount((c) => c + 1);
             }
-          } catch {
-            // ignore
           }
-        });
-        es.onerror = () => {
-          setRealtimeStatus(navigator.onLine ? 'reconnecting' : 'offline');
-        };
-      } catch {
-        setRealtimeStatus('offline');
-      }
+        } catch {
+          // ignore malformed SSE event payload
+        }
+      };
+
+      const startAuthenticatedSse = async () => {
+        try {
+          const headers = await getTeacherRequestHeaders(teacherSession?.token, {
+            Accept: 'text/event-stream',
+          });
+          const res = await fetch('/api/realtime/teacher-stream', {
+            method: 'GET',
+            headers,
+            signal: sseAbort.signal,
+          });
+          if (!res.ok || !res.body) {
+            setRealtimeStatus(navigator.onLine ? 'reconnecting' : 'offline');
+            return;
+          }
+          setRealtimeStatus('connected');
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let currentEvent = 'message';
+          let currentDataLines: string[] = [];
+
+          while (!sseAbort.signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (line === '') {
+                if (currentDataLines.length > 0) {
+                  handleSseEvent(currentEvent, currentDataLines.join('\n'));
+                }
+                currentEvent = 'message';
+                currentDataLines = [];
+              } else if (line.startsWith(':')) {
+                // SSE keepalive comment
+              } else if (line.startsWith('event:')) {
+                currentEvent = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                currentDataLines.push(line.slice(5).trim());
+              }
+            }
+          }
+        } catch (err: any) {
+          if (err?.name !== 'AbortError') {
+            setRealtimeStatus(navigator.onLine ? 'reconnecting' : 'offline');
+          }
+        }
+      };
+      startAuthenticatedSse();
 
       // Live Firestore onSnapshot listener when signed in with Google
       let unsubFirestore = () => {};
@@ -2077,12 +2110,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       // Fetch unread pedagogical notification badge count once session token is ready
       const refreshPedagogicalUnread = async () => {
         try {
-          const headers: Record<string, string> = {};
-          if (teacherSession?.token) headers['Authorization'] = `Bearer ${teacherSession.token}`;
-          if (auth.currentUser) {
-            const idToken = await auth.currentUser.getIdToken().catch(() => '');
-            if (idToken) headers['x-firebase-id-token'] = idToken;
-          }
+          const headers = await getTeacherRequestHeaders(teacherSession?.token);
           if (!headers['Authorization'] && !headers['x-firebase-id-token']) return;
           const res = await fetch('/api/notifications', { headers });
           if (res.ok) {
@@ -2099,23 +2127,29 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
       return () => {
         clearInterval(intervalId);
-        if (es) es.close();
+        sseAbort.abort();
         unsubFirestore();
       };
     }
   }, [loggedInTeacher, teacherSession?.role, teacherSession?.token]);
 
-  // Ensure legacy non-admin teacher sessions stored without an HMAC token acquire one smoothly
+  // Refresh Firebase ID token cleanly when Firebase user is signed in without an active session token
   useEffect(() => {
     if (!teacherSession || teacherSession.token || teacherSession.role === 'admin') return;
+    if (!auth.currentUser || auth.currentUser.isAnonymous || !auth.currentUser.emailVerified) return;
     let cancelled = false;
     (async () => {
       try {
+        const firebaseIdToken = await auth.currentUser!.getIdToken();
+        const headers = await getTeacherRequestHeaders(firebaseIdToken, {
+          'Content-Type': 'application/json',
+        });
         const res = await fetch('/api/teacher/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             email: teacherSession.email,
+            firebaseIdToken,
             fullName: teacherSession.fullName,
             school: teacherSession.school,
             regionalAcademy: teacherSession.regionalAcademy,
@@ -2200,16 +2234,22 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   // Listen to Firebase Authentication State changes to maintain active persistence
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      if (user && !teacherSession) {
+      if (user && !user.isAnonymous && user.emailVerified && !teacherSession) {
         const lowerEmail = user.email ? user.email.toLowerCase().trim() : '';
         if (lowerEmail) {
           try {
+            if (lowerEmail !== 'phillofikr@gmail.com') {
+              const profileState = await ensureTeacherProfileInFirestore({
+                fullName: user.displayName || 'الأستاذ المفوّض الموجه',
+              });
+              if (profileState.isDisabled) return;
+            }
             const firebaseIdToken = await user.getIdToken();
-            // Restore session securely using Firebase ID token
             const payload = lowerEmail === 'phillofikr@gmail.com'
               ? { email: lowerEmail, role: 'admin', firebaseIdToken }
               : {
                   email: lowerEmail,
+                  firebaseIdToken,
                   fullName: user.displayName || 'الأستاذ المفوّض الموجه',
                   school: 'ثانوية ابن رشد التأهيلية',
                   regionalAcademy: 'الأكاديمية الجهوية للتربية والتكوين لجهة الدار البيضاء سطات',
@@ -2220,9 +2260,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   yearsOfExperience: '10'
                 };
 
+            const loginHeaders = await getTeacherRequestHeaders(firebaseIdToken, {
+              'Content-Type': 'application/json',
+            });
             const response = await fetch('/api/teacher/login', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: loginHeaders,
               body: JSON.stringify(payload)
             });
             if (response.ok) {
@@ -2266,21 +2309,27 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     const isAdminLogin = lowerEmail === 'phillofikr@gmail.com';
 
     if (!isAdminLogin) {
-      if (!fullName.trim()) {
-        setLoginError('الرجاء إدخال الاسم الكامل للأستاذ.');
+      if (authPassword.trim().length < 6) {
+        setLoginError('يرجى إدخال كلمة مرور لا تقل عن 6 أحرف للمصادقة عبر Firebase Auth.');
         return;
       }
-      if (!school.trim()) {
-        setLoginError('الرجاء إدخال اسم المؤسسة التعليمية.');
-        return;
-      }
-      if (!regionalAcademy.trim()) {
-        setLoginError('الرجاء إدخال الأكاديمية الجهوية للتربية والتكوين.');
-        return;
-      }
-      if (!province.trim()) {
-        setLoginError('الرجاء إدخال العمالة أو الإقليم.');
-        return;
+      if (authMode === 'register') {
+        if (!fullName.trim()) {
+          setLoginError('الرجاء إدخال الاسم الكامل للأستاذ.');
+          return;
+        }
+        if (!school.trim()) {
+          setLoginError('الرجاء إدخال اسم المؤسسة التعليمية.');
+          return;
+        }
+        if (!regionalAcademy.trim()) {
+          setLoginError('الرجاء إدخال الأكاديمية الجهوية للتربية والتكوين.');
+          return;
+        }
+        if (!province.trim()) {
+          setLoginError('الرجاء إدخال العمالة أو الإقليم.');
+          return;
+        }
       }
     } else {
       if (!adminSecret.trim()) {
@@ -2290,22 +2339,71 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     }
 
     setLoading(true);
-    setLoginLoadingStatus('جاري مراجعة المدخلات والتحقق من صحة بريدك الإلكتروني...');
-    
+    setLoginLoadingStatus('جاري التحقق من الهوية عبر نظام المصادقة الآمن...');
+
     try {
-      await new Promise(r => setTimeout(r, 600));
+      let firebaseIdToken = '';
+      if (!isAdminLogin) {
+        if (authMode === 'register') {
+          const cred = await createUserWithEmailAndPassword(auth, lowerEmail, authPassword);
+          if (!cred.user.emailVerified) {
+            await sendEmailVerification(cred.user).catch(() => {});
+            setAuthMode('login');
+            setLoginError('تم إنشاء الحساب وإرسال رابط التفعيل إلى بريدك الإلكتروني. يرجى تأكيد البريد أولاً ثم تسجيل الدخول.');
+            return;
+          }
+          firebaseIdToken = await cred.user.getIdToken();
+        } else {
+          const cred = await signInWithEmailAndPassword(auth, lowerEmail, authPassword);
+          if (!cred.user.emailVerified) {
+            await sendEmailVerification(cred.user).catch(() => {});
+            throw new Error('بريدك الإلكتروني غير مفعّل بعد. تم إرسال رابط التفعيل — يرجى تأكيده ثم إعادة الدخول.');
+          }
+          const profileState = await ensureTeacherProfileInFirestore({
+            fullName: fullName.trim() || cred.user.displayName || lowerEmail.split('@')[0],
+            school: school.trim() || undefined,
+            regionalAcademy: regionalAcademy.trim() || undefined,
+            province: province.trim() || undefined,
+            specialty,
+            yearsOfExperience,
+          });
+          if (profileState.isDisabled) {
+            throw new Error('عذراً، هذا الحساب تم تعطيله مؤقتاً من قبل مالك المنصة.');
+          }
+          firebaseIdToken = await cred.user.getIdToken();
+        }
+      } else if (auth.currentUser && auth.currentUser.emailVerified) {
+        firebaseIdToken = await auth.currentUser.getIdToken().catch(() => '');
+      }
+
       setLoginLoadingStatus('جاري تأمين ممر العبور الآمن والتحقق في الخادم...');
-      
+
       const payload = isAdminLogin
-        ? { email: lowerEmail, role: 'admin', adminSecret: adminSecret.trim() }
-        : { email: lowerEmail, fullName, school, regionalAcademy, province, role: 'teacher', specialty, avatar, yearsOfExperience };
+        ? {
+            email: lowerEmail,
+            role: 'admin',
+            adminSecret: adminSecret.trim(),
+            ...(firebaseIdToken ? { firebaseIdToken } : {}),
+          }
+        : {
+            email: lowerEmail,
+            firebaseIdToken,
+            fullName: fullName.trim() || undefined,
+            school: school.trim() || undefined,
+            regionalAcademy: regionalAcademy.trim() || undefined,
+            province: province.trim() || undefined,
+            role: 'teacher',
+            specialty,
+            avatar,
+            yearsOfExperience,
+          };
 
-      await new Promise(r => setTimeout(r, 650));
-      setLoginLoadingStatus('تم تأسيس القناة! جاري حفظ بطاقة الأستاذ وتحديث البيانات...');
-
+      const loginHeaders = await getTeacherRequestHeaders(firebaseIdToken, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/teacher/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: loginHeaders,
         body: JSON.stringify(payload)
       });
       const data = await response.json();
@@ -2313,20 +2411,6 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         throw new Error(data.error || 'فشل الولوج الآمن ومزامنة البيانات.');
       }
 
-      // Check if this teacher has been disabled by Platform Owner
-      const savedDisabled = localStorage.getItem('philoscan_disabled_teachers');
-      let disabledList: string[] = [];
-      try {
-        disabledList = savedDisabled ? JSON.parse(savedDisabled) : [];
-      } catch (_) {}
-      if (data.teacherId && disabledList.includes(data.teacherId)) {
-        throw new Error('عذراً، هذا الحساب تم تعطيله مؤقتاً من قبل مالك المنصة.');
-      }
-      
-      await new Promise(r => setTimeout(r, 450));
-      setLoginLoadingStatus('اكتملت مزامنة الجلسة بنجاح! جاري تنصيب لوحة التحكم فِيلوسكان...');
-      await new Promise(r => setTimeout(r, 350));
-      
       const sessionObj: TeacherSession = {
         email: data.email,
         fullName: data.fullName,
@@ -2347,61 +2431,16 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       setTeacherSession(sessionObj);
       showToast('مرحباً بك مجدداً في فضاء الرقابة في فِيلوسكان.');
     } catch (err: any) {
-      setLoginError(err.message || 'حدث خطأ غير متوقع أثناء الاتصال بالخادم لمزامنة Firestore.');
+      setLoginError(formatFirebaseAuthErrorAr(err) || err.message || 'حدث خطأ أثناء التحقق من الهوية.');
     } finally {
       setLoading(false);
       setLoginLoadingStatus('');
     }
   };
 
-  const handleQuickDemoLogin = async () => {
-    try {
-      const res = await fetch('/api/teacher/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'professeur@philoscan.edu',
-          fullName: 'ذ. عماد المزراوي',
-          school: 'ثانوية ابن رشد التأهيلية',
-          regionalAcademy: 'الأكاديمية الجهوية لجهة الدار البيضاء سطات',
-          province: 'عمالة الدار البيضاء',
-          role: 'teacher',
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const sessionObj: TeacherSession = {
-          email: data.email,
-          fullName: data.fullName,
-          school: data.school,
-          regionalAcademy: data.regionalAcademy,
-          province: data.province,
-          loggedInAt: data.loggedInAt || new Date().toISOString(),
-          role: 'teacher',
-          teacherId: data.teacherId || 'TCH-001',
-          token: data.token,
-        };
-        localStorage.setItem('philoscan_teacher_session', JSON.stringify(sessionObj));
-        localStorage.setItem('philoscan_teacher_email', sessionObj.email);
-        setTeacherSession(sessionObj);
-        return;
-      }
-    } catch {
-      // Offline fallback below
-    }
-    const demoSession: TeacherSession = {
-      email: 'professeur@philoscan.edu',
-      fullName: 'ذ. عماد المزراوي',
-      school: 'ثانوية ابن رشد التأهيلية',
-      regionalAcademy: 'الأكاديمية الجهوية لجهة الدار البيضاء سطات',
-      province: 'عمالة الدار البيضاء',
-      loggedInAt: new Date().toISOString(),
-      role: 'teacher',
-      teacherId: 'TCH-001',
-    };
-    localStorage.setItem('philoscan_teacher_session', JSON.stringify(demoSession));
-    localStorage.setItem('philoscan_teacher_email', 'professeur@philoscan.edu');
-    setTeacherSession(demoSession);
+  const handleOpenGoogleQuickLogin = () => {
+    setGoogleAuthMode('direct_login');
+    setShowGoogleSimulation(true);
   };
 
   const handleLogout = () => {
@@ -2442,9 +2481,12 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         teacherEmail: loggedInTeacher,
         teacherId: teacherSession.teacherId
       };
+      const sessionHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch('/api/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: sessionHeaders,
         body: JSON.stringify(payload)
       });
       const data = await response.json();
@@ -2510,16 +2552,19 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     if (!weightsSession) return;
     setSavingWeights(true);
     try {
+      const weightsHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch(`/api/sessions/${weightsSession.sessionId}/update-weights`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: weightsHeaders,
         body: JSON.stringify({ customWeights: weightsForm })
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || 'فشلت عملية حفظ الأوزان.');
       }
-      showToast('تم تحديث أوزان خطورة المخالفات بنجاح! سينعكس ذلك فوراً على مؤشر النزاهة للتلاميذ.');
+      showToast('تم تحديث أوزان خطورة المخالفات بنجاح! سينعكس ذلك فوراً على مؤشر النزاهة الاسترشادي.');
       setSessions(prev => prev.map(s => s.sessionId === weightsSession.sessionId ? { ...s, customWeights: weightsForm } : s));
       setShowWeightsModal(false);
       setWeightsSession(null);
@@ -2533,12 +2578,17 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   const handleRunGeminiAnalysis = async (studentId: string) => {
     setAnalyzingWithGemini(true);
     try {
+      const currentSub = submissions.find((s) => s.id === studentId) || selectedStudent;
+      const geminiHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch(`/api/submissions/${studentId}/analyze-gemini`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: geminiHeaders,
         body: JSON.stringify({
           email: loggedInTeacher,
-          role: teacherSession?.role
+          role: teacherSession?.role,
+          ...(currentSub ? { submission: currentSub } : {}),
         })
       });
       const data = await response.json();
@@ -2548,8 +2598,20 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
       setSubmissions(prev => prev.map(sub => sub.id === studentId ? data.submission : sub));
       setSelectedStudent(data.submission);
       saveLocalSubmission(data.submission);
-      syncSubmissionToFirestore(data.submission);
-      showToast('تم تحديث التحليل البيداغوجي وتوليد 3 توصيات ذكية ومخصصة بالكامل عبر Gemini.');
+      if (data?.signatureIntegrity) {
+        setStudentVerificationMap((prev) => ({
+          ...prev,
+          [studentId]: {
+            valid: data.signatureIntegrity === 'valid',
+            signatureIntegrity: data.signatureIntegrity,
+            analysisOrigin: data.analysisOrigin || 'gemini',
+            contentTruthNote: data.contentTruthNote || 'التحقق يؤكد سلامة التوقيع فقط.',
+            checkedAt: new Date().toISOString(),
+            submissionId: studentId,
+          },
+        }));
+      }
+      showToast('تم تحديث التحليل البيداغوجي الموقّع عبر HTTPS وتوليد 3 توصيات ذكية عبر Gemini.');
     } catch (err: any) {
       showToast(err.message || 'حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي.', 'error');
     } finally {
@@ -2557,12 +2619,47 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     }
   };
 
+  const handleVerifyStudentSignature = async (sub: StudentSubmission) => {
+    if (!sub?.id) return;
+    setVerifyingStudentId(sub.id);
+    try {
+      const headers = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
+      const res = await fetch(`/api/submissions/${encodeURIComponent(sub.id)}/verify-analysis`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          submission: sub,
+          envelope: sub.signedEnvelope,
+        }),
+      });
+      const data = (await res.json()) as AnalysisVerificationResponse;
+      if (data && data.signatureIntegrity) {
+        setStudentVerificationMap((prev) => ({ ...prev, [sub.id]: data }));
+        showToast(
+          data.valid
+            ? `توقيع الخادم سليم (${data.analysisOrigin})`
+            : `حالة التوقيع: ${data.signatureIntegrity}`,
+          data.valid ? 'success' : 'error'
+        );
+      }
+    } catch {
+      showToast('تعذر الاتصال بخادم التحقق من التوقيع.', 'error');
+    } finally {
+      setVerifyingStudentId(null);
+    }
+  };
+
   const handleSaveLimitedEdit = async (studentId: string) => {
     setActionLoading(true);
     try {
+      const editHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch(`/api/submissions/${studentId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: editHeaders,
         body: JSON.stringify({
           teacherNotes: editNotes,
           overriddenClassification: editOverrideClass === 'unselected' ? null : editOverrideClass,
@@ -2591,10 +2688,13 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
     try {
       const existingSub = submissions.find(sub => sub.id === studentId);
       if (!existingSub) return;
-      
+
+      const overrideHeaders = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
       const response = await fetch(`/api/submissions/${studentId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: overrideHeaders,
         body: JSON.stringify({
           teacherNotes: existingSub.teacherNotes || '',
           overriddenClassification: newOverrideCls,
@@ -2627,11 +2727,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         setConfirmDialog(null);
         setActionLoading(true);
         try {
+          const delHeaders = await getTeacherRequestHeaders(teacherSession?.token);
           const response = await fetch(`/api/submissions/${studentId}?role=${teacherSession?.role || 'teacher'}&email=${encodeURIComponent(loggedInTeacher || '')}`, {
             method: 'DELETE',
-            headers: {
-              'Authorization': 'Bearer ' + (teacherSession?.token || '')
-            }
+            headers: delHeaders,
           });
           if (response.ok) {
             setSubmissions(prev => prev.filter(sub => sub.id !== studentId));
@@ -2651,17 +2750,43 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
   };
 
   // ADMIN CRITICAL MANAGEMENT PROCESSORS
-  const handleToggleDisableTeacher = (teacherId: string) => {
-    let updated: string[];
-    if (disabledTeacherIds.includes(teacherId)) {
-      updated = disabledTeacherIds.filter(id => id !== teacherId);
-      showToast('تم تمكين وتفعيل حساب الأستاذ بنجاح.');
-    } else {
-      updated = [...disabledTeacherIds, teacherId];
-      showToast('تم تعطيل حساب الأستاذ بنجاح ومنعه من الولوج.');
+  const handleToggleDisableTeacher = async (teacherId: string) => {
+    const targetTeacher = teachersList.find((t) => t.id === teacherId);
+    const nextDisabled = !disabledTeacherIds.includes(teacherId);
+    try {
+      const headers = await getTeacherRequestHeaders(teacherSession?.token, {
+        'Content-Type': 'application/json',
+      });
+      const res = await fetch(`/api/admin/teachers/${encodeURIComponent(teacherId)}?role=admin`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ isDisabled: nextDisabled }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'تعذر تحديث حالة حساب الأستاذ.');
+      }
+      if (auth.currentUser) {
+        const fsTeacherId = targetTeacher?.uid || teacherId;
+        await updateDoc(doc(db, 'teachers', fsTeacherId), {
+          isDisabled: nextDisabled,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+      setDisabledTeacherIds((prev) =>
+        nextDisabled ? [...prev.filter((id) => id !== teacherId), teacherId] : prev.filter((id) => id !== teacherId)
+      );
+      setTeachersList((prev) =>
+        prev.map((t) => (t.id === teacherId ? { ...t, isDisabled: nextDisabled } : t))
+      );
+      showToast(
+        nextDisabled
+          ? 'تم تعطيل حساب الأستاذ بنجاح في الخادم وقاعدة البيانات.'
+          : 'تم تمكين وتفعيل حساب الأستاذ بنجاح.'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'تعذر تحديث حالة الحساب.', 'error');
     }
-    setDisabledTeacherIds(updated);
-    localStorage.setItem('philoscan_disabled_teachers', JSON.stringify(updated));
   };
 
   const handleSaveTeacherDetails = (e: React.FormEvent) => {
@@ -2680,11 +2805,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         setConfirmDialog(null);
         setActionLoading(true);
         try {
+          const delHeaders = await getTeacherRequestHeaders(teacherSession?.token);
           const response = await fetch(`/api/admin/teachers/${teacherId}?role=admin`, {
             method: 'DELETE',
-            headers: {
-              'Authorization': 'Bearer ' + (teacherSession?.token || '')
-            }
+            headers: delHeaders,
           });
           if (response.ok) {
             showToast('تم إلغاء حساب الأستاذ بنجاح.');
@@ -2710,11 +2834,10 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
         setConfirmDialog(null);
         setActionLoading(true);
         try {
+          const delHeaders = await getTeacherRequestHeaders(teacherSession?.token);
           const response = await fetch(`/api/sessions/${sessionId}?role=admin`, {
             method: 'DELETE',
-            headers: {
-              'Authorization': 'Bearer ' + (teacherSession?.token || '')
-            }
+            headers: delHeaders,
           });
           if (response.ok) {
             showToast('تم مسح الجلسة التشخيصية بكامل سجلاتها.');
@@ -3269,6 +3392,46 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   </motion.div>
                 ) : (
                   <>
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setAuthMode('login')}
+                        className={`py-2 text-xs font-black rounded-lg transition cursor-pointer ${
+                          authMode === 'login' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        تسجيل الدخول
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAuthMode('register')}
+                        className={`py-2 text-xs font-black rounded-lg transition cursor-pointer ${
+                          authMode === 'register' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        إنشاء حساب أستاذ جديد
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-700 font-bold mb-1.5 text-xs">
+                        كلمة المرور (Firebase Auth):
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="password"
+                          value={authPassword}
+                          onChange={(e) => setAuthPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 pr-11 min-h-[46px] text-slate-800 text-base sm:text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition font-mono"
+                          required
+                        />
+                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4.5 h-4.5 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    {authMode === 'register' && (
+                      <>
                     {/* الاسم الكامل */}
                     <div>
                       <label className="block text-slate-700 font-bold mb-1.5 text-xs">
@@ -3377,6 +3540,8 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4.5 h-4.5 pointer-events-none" />
                       </div>
                     </div>
+                      </>
+                    )}
                   </>
                 )}
 
@@ -3392,7 +3557,9 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                         <span>جاري مزامنة السحابة...</span>
                       </>
                     ) : (
-                      'تسجيل دخول وتأكيد بطاقة الأستاذ'
+                      authMode === 'register' && email.toLowerCase().trim() !== 'phillofikr@gmail.com'
+                        ? 'إنشاء حساب الأستاذ وإرسال التفعيل'
+                        : 'تسجيل دخول وتأكيد بطاقة الأستاذ'
                     )}
                   </button>
 
@@ -3411,17 +3578,17 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
 
                 <div className="relative flex py-2 items-center">
                   <div className="flex-grow border-t border-slate-200"></div>
-                  <span className="flex-shrink mx-4 text-slate-400 text-xs font-semibold">أو للولوج التجريبي الفوري</span>
+                  <span className="flex-shrink mx-4 text-slate-400 text-xs font-semibold">أو الدخول السريع الموثّق</span>
                   <div className="flex-grow border-t border-slate-200"></div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={handleQuickDemoLogin}
+                  onClick={handleOpenGoogleQuickLogin}
                   className="w-full py-3 min-h-[46px] bg-blue-50 hover:bg-blue-100/70 text-blue-700 font-bold rounded-xl border border-blue-200/50 transition duration-150 text-xs flex items-center justify-center gap-1.5"
                 >
                   <Sparkles className="w-4 h-4" />
-                  تسجيل دخول تجريبي فوري بدفتر تلامذة مهيأ
+                  تسجيل الدخول الآمن بحساب Google
                 </button>
 
                 <button
@@ -7238,11 +7405,11 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               </div>
                               <div>
                                 <h4 className="text-xs font-black text-slate-800 inline-flex items-center gap-1.5">
-                                  <span>مستوى الحساسية للإنذار الذكي بمؤشر النزاهة</span>
+                                  <span>مستوى الحساسية للإنذار الذكي بمؤشر النزاهة (استرشادي فقط)</span>
                                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
                                 </h4>
                                 <p className="text-[10px] text-slate-400 mt-0.5">
-                                  سيتم إخطارك فوراً وبصوت تنبيه مخصص في حال تراجع مؤشر الأمان لأي تلميذ عن هذا الحد المالي.
+                                  تنبيه استرشادي للأستاذ للمتابعة الصفية ولا يُعد حكماً آلياً على نزاهة التلميذ.
                                 </p>
                               </div>
                             </div>
@@ -7526,7 +7693,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                               <tr className="border-b border-slate-200 text-slate-400 font-extrabold text-[11px]">
                                 <th className="pb-3 pr-2">اسم كامل (التلميذ)</th>
                                 <th className="pb-3">الوضعية الحية والنشاط</th>
-                                <th className="pb-3">مؤشر الأمان والنزاهة</th>
+                                <th className="pb-3">مؤشر الأمان والنزاهة (استرشادي)</th>
                                 <th className="pb-3 text-center">المخالفات</th>
                                 <th className="pb-3 text-left pl-2">إجراءات المدرس</th>
                               </tr>
@@ -9610,26 +9777,61 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                           <Sparkles className="w-4 h-4 text-indigo-500" />
                           توصيات التوجيه وتحليل إجابات المقاييس الخمسة (Gemini):
                         </h4>
-                        
-                        <button
-                          type="button"
-                          disabled={analyzingWithGemini}
-                          onClick={() => handleRunGeminiAnalysis(selectedStudent.id)}
-                          className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-xl text-[11px] transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
-                        >
-                          {analyzingWithGemini ? (
-                            <>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={verifyingStudentId === selectedStudent.id}
+                            onClick={() => handleVerifyStudentSignature(selectedStudent)}
+                            className="py-1.5 px-3 bg-white hover:bg-indigo-100/60 border border-indigo-200 text-indigo-800 font-bold rounded-xl text-[11px] transition flex items-center gap-1.5 cursor-pointer"
+                          >
+                            {verifyingStudentId === selectedStudent.id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>جاري التحليل المعمق...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="w-3.5 h-3.5" />
-                              <span>توليد تحليل مخصص بـ Gemini</span>
-                            </>
-                          )}
-                        </button>
+                            ) : (
+                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                            )}
+                            <span>فحص سلامة التوقيع</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={analyzingWithGemini}
+                            onClick={() => handleRunGeminiAnalysis(selectedStudent.id)}
+                            className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-xl text-[11px] transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
+                          >
+                            {analyzingWithGemini ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>جاري التحليل المعمق...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>توليد تحليل مخصص بـ Gemini</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
+
+                      {studentVerificationMap[selectedStudent.id] && (
+                        <div
+                          className={`p-3 rounded-xl border text-xs ${
+                            studentVerificationMap[selectedStudent.id].valid
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                              : 'bg-amber-50 border-amber-200 text-amber-900'
+                          }`}
+                        >
+                          <p className="font-black">
+                            {studentVerificationMap[selectedStudent.id].valid
+                              ? `توقيع الخادم سليم (${studentVerificationMap[selectedStudent.id].analysisOrigin})`
+                              : `نتيجة الفحص: ${studentVerificationMap[selectedStudent.id].signatureIntegrity}`}
+                          </p>
+                          <p className="text-[11px] mt-0.5 opacity-90">
+                            {studentVerificationMap[selectedStudent.id].contentTruthNote}
+                          </p>
+                        </div>
+                      )}
 
                       {selectedStudent.analysis.pedagogicalRecommendationsList && selectedStudent.analysis.pedagogicalRecommendationsList.length > 0 ? (
                         <div className="space-y-2.5">
@@ -10814,7 +11016,7 @@ export default function TeacherDashboard({ onBackToHome }: TeacherDashboardProps
                   <span className="text-sm font-black text-slate-800">{selectedProctorStudentHistory.studentName}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 font-bold block">مؤشر موثوقية الأمان:</span>
+                  <span className="text-[10px] text-slate-400 font-bold block">مؤشر موثوقية الأمان (استرشادي فقط):</span>
                   <span className={`text-sm font-mono font-black tabular-nums ${selectedProctorStudentHistory.reliabilityIndex < 40 ? 'text-red-600' : selectedProctorStudentHistory.reliabilityIndex < 80 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {selectedProctorStudentHistory.reliabilityIndex !== undefined ? selectedProctorStudentHistory.reliabilityIndex : 100}%
                   </span>

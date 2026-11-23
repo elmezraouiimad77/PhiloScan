@@ -1,14 +1,17 @@
-name: PhiloScan CI & Firebase Sync
+name: PhiloScan CI & Manual Firebase Sync
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
   workflow_dispatch:
 
 jobs:
   build-and-verify:
-    name: Typecheck & Production Build
+    name: Typecheck, Rules Lint, Tests & Production Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -26,14 +29,23 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run lint
 
+      - name: Lint Firestore security rules (draft & active)
+        run: npx eslint DRAFT_firestore.rules firestore.rules
+
+      - name: Run cryptographic signing, PII guard & API route tests
+        run: npx tsx --test tests/canonicalSigning.test.ts tests/tokenAndPiiGuard.test.ts tests/apiRoutes.test.ts
+
+      - name: Verify JSON-to-Firestore migration dry-run (read-only)
+        run: npx tsx scripts/migrate-json-to-firestore.ts --dry-run
+
       - name: Build frontend and Express server bundle
         run: npm run build
 
-  deploy-firestore-rules:
-    name: Deploy Firestore Security Rules
+  deploy-firestore-rules-and-indexes:
+    name: Manual Deploy Firestore Rules & Indexes (Spark Free)
     needs: build-and-verify
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,12 +56,12 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Deploy Firestore Rules via Firebase CLI
+      - name: Deploy Firestore Rules & Enterprise Indexes via Firebase CLI
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_PROJECT_AE3CA3A5_D34F_42A5_A4A }}
         run: |
           if [ -z "$FIREBASE_SA" ]; then
-            echo "::notice::FIREBASE_SERVICE_ACCOUNT secret is not configured yet. Skipping automated Firestore rules deploy."
+            echo "::notice::FIREBASE_SERVICE_ACCOUNT secret is not configured. Skipping Firestore rules/indexes deploy."
             exit 0
           fi
           SA_FILE="$(mktemp)"
@@ -57,4 +69,4 @@ jobs:
           chmod 600 "$SA_FILE"
           printf '%s' "$FIREBASE_SA" > "$SA_FILE"
           export GOOGLE_APPLICATION_CREDENTIALS="$SA_FILE"
-          npx --yes firebase-tools deploy --only firestore:rules --project project-ae3ca3a5-d34f-42a5-a4a --non-interactive
+          npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes --project project-ae3ca3a5-d34f-42a5-a4a --non-interactive

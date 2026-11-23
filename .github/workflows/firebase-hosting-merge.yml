@@ -1,5 +1,5 @@
-# Deploy to live Firebase Hosting channel on push/merge to main
-name: Deploy to Firebase Hosting on merge
+# Free CI build & optional manual Firebase Hosting deploy (primary runtime: Render Free + Firestore Enterprise)
+name: Build & Optional Firebase Hosting Deploy
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  build_and_deploy:
+  build_and_optional_deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,33 +25,28 @@ jobs:
           cache: 'npm'
 
       - name: Install project dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Run TypeScript typecheck
+        run: npm run lint
 
       - name: Build production bundle
         run: npm run build
 
-      - name: Install Firebase CLI (firebase-tools)
-        run: npm install -g firebase-tools
-
-      - name: Verify secret & deploy to Firebase Hosting (live)
+      - name: Deploy static assets to Firebase Hosting (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_PROJECT_AE3CA3A5_D34F_42A5_A4A }}
           FIREBASE_PROJECT_ID: project-ae3ca3a5-d34f-42a5-a4a
         run: |
           if [ -z "$FIREBASE_SA" ]; then
-            echo "::error::Missing FIREBASE_SERVICE_ACCOUNT secret. Go to GitHub Repository -> Settings -> Secrets and variables -> Actions -> New repository secret, name it FIREBASE_SERVICE_ACCOUNT, and paste your Google Cloud / Firebase Service Account JSON key."
-            exit 1
+            echo "::notice::FIREBASE_SERVICE_ACCOUNT is not set; skipping optional Firebase Hosting deploy (primary backend+SPA runs on Render Free)."
+            exit 0
           fi
 
           node -e '
             const raw = process.env.FIREBASE_SA || "";
-            let parsed;
-            try {
-              parsed = JSON.parse(raw);
-            } catch (err) {
-              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON. Re-copy the full JSON key file without extra formatting.");
-              process.exit(1);
-            }
+            const parsed = JSON.parse(raw);
             if (!parsed.client_email || !parsed.private_key) {
               console.error("::error::FIREBASE_SERVICE_ACCOUNT JSON is missing client_email or private_key.");
               process.exit(1);
@@ -64,10 +59,4 @@ jobs:
           printf '%s' "$FIREBASE_SA" > "$SA_FILE"
           export GOOGLE_APPLICATION_CREDENTIALS="$SA_FILE"
 
-          firebase deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive
-
-          {
-            echo "### Firebase Hosting Deployment Succeeded"
-            echo "- Project: \`$FIREBASE_PROJECT_ID\`"
-            echo "- Live URL: https://${FIREBASE_PROJECT_ID}.web.app"
-          } >> "$GITHUB_STEP_SUMMARY"
+          npx --yes firebase-tools deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive

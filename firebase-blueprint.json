@@ -2,134 +2,246 @@
   "entities": {
     "Teacher": {
       "title": "Teacher",
-      "description": "Represents a teacher user profile in the diagnostic platform",
+      "description": "Teacher profile indexed by Firebase Auth UID with fail-closed isDisabled flag",
       "type": "object",
       "properties": {
-        "email": { "type": "string", "description": "Email address of the teacher" },
-        "fullName": { "type": "string", "description": "Full name of the teacher" },
-        "school": { "type": "string", "description": "School name where the teacher teaches" },
-        "regionalAcademy": { "type": "string", "description": "Regional educational academy" },
-        "province": { "type": "string", "description": "Province of employment" },
-        "role": { "type": "string", "enum": ["teacher", "admin"], "description": "Access privileges under RBAC" },
-        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the teacher registered" }
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "fullName": { "type": "string", "maxLength": 256 },
+        "school": { "type": "string", "maxLength": 256 },
+        "regionalAcademy": { "type": "string", "maxLength": 256 },
+        "province": { "type": "string", "maxLength": 128 },
+        "specialty": { "type": "string", "maxLength": 128 },
+        "yearsExperience": { "type": "integer", "minimum": 0, "maximum": 80 },
+        "role": { "type": "string", "enum": ["teacher", "admin"] },
+        "isDisabled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["email", "fullName", "role"]
+      "required": ["uid", "email", "fullName", "role", "isDisabled", "createdAt", "updatedAt"]
     },
     "Admin": {
       "title": "Admin",
-      "description": "Platform global Super Administrator account",
+      "description": "Server/Console-provisioned Super Administrator record (client writes strictly blocked)",
       "type": "object",
       "properties": {
-        "email": { "type": "string", "description": "Email of the admin" },
-        "fullName": { "type": "string", "description": "Full name" },
-        "role": { "type": "string", "enum": ["admin"], "description": "Must be admin" },
-        "createdAt": { "type": "string", "format": "date-time", "description": "Created at" }
+        "email": { "type": "string", "maxLength": 200 },
+        "fullName": { "type": "string", "maxLength": 256 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "isDisabled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["email", "fullName", "role"]
+      "required": ["email", "fullName", "role", "isDisabled"]
     },
     "Session": {
-      "title": "Diagnostic Session",
-      "description": "A diagnostic session code created by a teacher for a classroom of students",
+      "title": "Diagnostic Session (Private Owner Copy)",
+      "description": "Teacher-private diagnostic session record",
       "type": "object",
       "properties": {
-        "sessionId": { "type": "string", "description": "Tracking ID of the diagnostic session" },
-        "teacherId": { "type": "string", "description": "Firebase Auth UID of the owner teacher" },
-        "teacherEmail": { "type": "string", "description": "Email of parent teacher" },
-        "institution": { "type": "string", "description": "School institution name" },
-        "level": { "type": "string", "description": "Grade level" },
-        "stream": { "type": "string", "description": "Stream or branch of study" },
-        "class": { "type": "string", "description": "Class code/group number" },
-        "classNumber": { "type": "string", "description": "Class number identifier" },
-        "title": { "type": "string", "description": "Diagnostic session title" },
-        "province": { "type": "string", "description": "Province or directorate" },
-        "isActive": { "type": "boolean", "description": "Is the session accepting submissions" },
-        "supervisedMode": { "type": "boolean", "description": "Anti-cheat integrity monitoring flag" },
-        "formId": { "type": "string", "description": "Associated form template identifier" },
-        "formTitle": { "type": "string", "description": "Associated form template title" },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "ownerRef": { "type": "string", "pattern": "^own_[a-f0-9]{32}$" },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "teacherEmail": { "type": "string", "maxLength": 200 },
+        "institution": { "type": "string", "maxLength": 200 },
+        "level": { "type": "string", "maxLength": 100 },
+        "stream": { "type": "string", "maxLength": 100 },
+        "class": { "type": "string", "maxLength": 128 },
+        "classNumber": { "type": "string", "maxLength": 40 },
+        "title": { "type": "string", "maxLength": 200 },
+        "province": { "type": "string", "maxLength": 120 },
+        "isActive": { "type": "boolean" },
+        "supervisedMode": { "type": "boolean" },
+        "formId": { "type": "string", "maxLength": 120 },
+        "formTitle": { "type": "string", "maxLength": 200 },
+        "customWeights": { "type": "object" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["sessionId", "teacherId", "teacherEmail", "class", "isActive"]
+      "required": ["sessionId", "ownerRef", "teacherId", "class", "isActive", "createdAt", "updatedAt"]
     },
-    "Submission": {
-      "title": "Student Submission",
-      "description": "A student's assessment response and its automatic diagnostic analysis",
+    "PublicSession": {
+      "title": "Public Session Lookup",
+      "description": "Minimal public session metadata for students without teacherId, teacherEmail, or customWeights",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Submission document identifier" },
-        "studentName": { "type": "string", "description": "Arabic full name of student" },
-        "answers": { "type": "object", "description": "Object containing the answers" },
-        "analysis": { "type": "object", "description": "Pedagogical assessment output from analyzer" },
-        "sessionId": { "type": "string", "description": "UUID or uppercase short code of the matching session" },
-        "teacherId": { "type": "string", "description": "UID of session owner teacher" },
-        "teacherEmail": { "type": "string", "description": "Email of session owner teacher" },
-        "teacherNotes": { "type": "string", "description": "Teacher pedagogical notes" },
-        "overriddenClassification": { "type": "string", "description": "Optional teacher-overridden classification" },
-        "deliveryReceiptId": { "type": "string", "description": "Verified delivery receipt identifier" },
-        "deliveredAt": { "type": "string", "format": "date-time", "description": "Timestamp when submission was delivered" },
-        "reliabilityIndex": { "type": "integer", "description": "Integrity score 0-100" },
-        "institution": { "type": "string", "description": "Institution name" },
-        "level": { "type": "string", "description": "Grade level" },
-        "stream": { "type": "string", "description": "Stream of study" },
-        "classNumber": { "type": "string", "description": "Class group identifier" },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "ownerRef": { "type": "string", "pattern": "^own_[a-f0-9]{32}$" },
+        "title": { "type": "string", "maxLength": 200 },
+        "institution": { "type": "string", "maxLength": 200 },
+        "level": { "type": "string", "maxLength": 100 },
+        "stream": { "type": "string", "maxLength": 100 },
+        "class": { "type": "string", "maxLength": 128 },
+        "classNumber": { "type": "string", "maxLength": 40 },
+        "province": { "type": "string", "maxLength": 120 },
+        "isActive": { "type": "boolean" },
+        "supervisedMode": { "type": "boolean" },
+        "formId": { "type": "string", "maxLength": 120 },
+        "formTitle": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "ownerRef", "class", "isActive", "updatedAt"]
+    },
+    "OwnerLink": {
+      "title": "Opaque Owner Link",
+      "description": "Maps opaque ownerRef tokens to teacherId and sessionId without leaking teacher identity to students",
+      "type": "object",
+      "properties": {
+        "ownerRef": { "type": "string", "pattern": "^own_[a-f0-9]{32}$" },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerRef", "teacherId", "sessionId", "createdAt"]
+    },
+    "Presence": {
+      "title": "Student Session Presence",
+      "description": "Live session heartbeat keyed by studentAuthUid",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "studentAuthUid": { "type": "string", "maxLength": 128 },
+        "studentLabel": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["active", "submitted", "away", "flagged"] },
+        "violationCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "currentQuestionIndex": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "lastHeartbeatAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "studentAuthUid", "status", "lastHeartbeatAt"]
+    },
+    "ViolationEvent": {
+      "title": "Advisory Proctoring Violation Event",
+      "description": "Append-only advisory integrity event keyed by {studentAuthUid}_{seq}",
+      "type": "object",
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "studentAuthUid": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["tab_switch", "window_blur", "fullscreen_exit", "copy_paste", "idle_timeout", "devtools_suspect", "focus_lost", "other"] },
+        "details": { "type": "string", "maxLength": 400 },
+        "advisoryOnly": { "type": "boolean" },
+        "occurredAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["seq", "studentAuthUid", "sessionId", "type", "occurredAt"]
+    },
+    "Submission": {
+      "title": "Student Submission (Option A)",
+      "description": "Student diagnostic response bound to deterministic {sessionId}_{studentAuthUid} without privileged Option-B fields",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 200 },
+        "studentAuthUid": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "answers": { "type": "object" },
+        "analysis": { "type": "object" },
+        "signedEnvelope": { "type": "object" },
+        "sessionId": { "type": "string", "maxLength": 64 },
+        "ownerRef": { "type": "string", "pattern": "^own_[a-f0-9]{32}$" },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "teacherEmail": { "type": "string", "maxLength": 200 },
+        "teacherNotes": { "type": "string", "maxLength": 2000 },
+        "overriddenClassification": { "type": "string", "maxLength": 100 },
+        "deliveryReceiptId": { "type": "string", "maxLength": 64 },
+        "deliveredAt": { "type": "string", "format": "date-time" },
+        "reliabilityIndex": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "institution": { "type": "string", "maxLength": 200 },
+        "level": { "type": "string", "maxLength": 100 },
+        "stream": { "type": "string", "maxLength": 100 },
+        "classNumber": { "type": "string", "maxLength": 40 },
         "submittedAt": { "type": "string", "format": "date-time" },
         "cloudSyncedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["studentName", "answers", "analysis", "sessionId", "teacherId"]
+      "required": ["studentName", "studentAuthUid", "answers", "analysis", "sessionId", "ownerRef", "submittedAt"]
     },
     "Form": {
       "title": "Questionnaire Form",
-      "description": "Represents a questionnaire template or draft created by a teacher",
       "type": "object",
       "properties": {
-        "formId": { "type": "string", "description": "Unique questionnaire ID" },
-        "title": { "type": "string", "description": "Title of the form" },
-        "description": { "type": "string", "description": "Form description" },
-        "teacherId": { "type": "string", "description": "Firebase Auth UID of the owner teacher" },
-        "teacherEmail": { "type": "string", "description": "Email of the owner teacher" },
-        "questions": { "type": "array", "description": "List of question objects" },
-        "status": { "type": "string", "enum": ["saved", "published", "ready"], "description": "Status of the form" },
-        "isTemplate": { "type": "boolean", "description": "True if the form is a standard ready-to-use template" },
+        "formId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "teacherEmail": { "type": "string", "maxLength": 200 },
+        "questions": { "type": "array" },
+        "status": { "type": "string", "enum": ["saved", "published", "ready"] },
+        "isTemplate": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["formId", "title", "teacherId", "status"]
+      "required": ["formId", "title", "teacherId", "status", "isTemplate"]
+    },
+    "Report": {
+      "title": "Issue or Pedagogical Feedback Report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "reporterUid": { "type": "string", "maxLength": 128 },
+        "reporterName": { "type": "string", "maxLength": 200 },
+        "reporterEmail": { "type": "string", "maxLength": 200 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 3000 },
+        "imageUrl": { "type": "string", "maxLength": 250000 },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "reporterUid", "description", "status", "createdAt"]
+    },
+    "LandingConfig": {
+      "title": "Landing Page Configuration",
+      "type": "object",
+      "properties": {
+        "heroTitle": { "type": "string" },
+        "heroSubtitle": { "type": "string" },
+        "heroDescription": { "type": "string" },
+        "features": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     },
     "Stats": {
       "title": "Platform Statistics Counters",
-      "description": "Aggregated live counts of platform activity cached on Firestore",
       "type": "object",
       "properties": {
-        "teachersCount": { "type": "integer" },
-        "schoolsCount": { "type": "integer" },
-        "sessionsCount": { "type": "integer" },
-        "submissionsCount": { "type": "integer" },
-        "studentsCount": { "type": "integer" },
+        "teachersCount": { "type": "integer", "minimum": 0 },
+        "schoolsCount": { "type": "integer", "minimum": 0 },
+        "sessionsCount": { "type": "integer", "minimum": 0 },
+        "submissionsCount": { "type": "integer", "minimum": 0 },
+        "studentsCount": { "type": "integer", "minimum": 0 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["teachersCount", "schoolsCount", "sessionsCount", "submissionsCount", "studentsCount"]
     },
-    "NotificationSettings": {
-      "title": "Teacher Notification Settings",
-      "description": "Opt-in pedagogical notification channel and consent preferences isolated per teacher",
+    "MigrationOrphan": {
+      "title": "Migration Orphan Archive",
+      "description": "Admin-only record of legacy JSON records lacking valid parent teacher or session links",
       "type": "object",
       "properties": {
-        "teacherId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$", "description": "Owner Firebase Auth UID" },
-        "teacherEmail": { "type": "string", "maxLength": 200, "description": "Owner teacher email" },
-        "consentAccepted": { "type": "boolean", "description": "Explicit opt-in flag" },
+        "sourceFile": { "type": "string" },
+        "recordId": { "type": "string" },
+        "reason": { "type": "string" },
+        "payload": { "type": "object" },
+        "archivedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "NotificationSettings": {
+      "title": "Teacher Notification Settings",
+      "type": "object",
+      "properties": {
+        "teacherId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teacherEmail": { "type": "string", "maxLength": 200 },
+        "consentAccepted": { "type": "boolean" },
         "consentTimestamp": { "type": "string", "format": "date-time", "maxLength": 40 },
-        "disableAllExternal": { "type": "boolean", "description": "Master switch disabling Email and WhatsApp" },
-        "channels": { "type": "object", "description": "Channel enablement flags (inApp, email, whatsapp)" },
-        "emailConfig": { "type": "object", "description": "Linked notification email address and verification metadata" },
-        "whatsappConfig": { "type": "object", "description": "Linked WhatsApp country code, E.164 number, and explicit consent" },
-        "messageTypes": { "type": "object", "description": "Allowed pedagogical notification categories" },
+        "disableAllExternal": { "type": "boolean" },
+        "channels": { "type": "object" },
+        "emailConfig": { "type": "object" },
+        "whatsappConfig": { "type": "object" },
+        "messageTypes": { "type": "object" },
         "updatedAt": { "type": "string", "format": "date-time", "maxLength": 40 }
       },
       "required": ["teacherId", "teacherEmail", "consentAccepted", "disableAllExternal", "channels", "emailConfig", "whatsappConfig", "messageTypes", "updatedAt"]
     },
     "PedagogicalNotification": {
       "title": "Pedagogical Notification",
-      "description": "Smart pedagogical alert generated from diagnostic cohort/individual indicators",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -157,35 +269,63 @@
   "firestore": {
     "/teachers/{teacherId}": {
       "schema": "Teacher",
-      "description": "Collection of teacher profiles indexed by uid"
+      "description": "Teacher profiles indexed by UID with fail-closed isDisabled flag"
     },
     "/admins/{adminId}": {
       "schema": "Admin",
-      "description": "Collection of Super Administrators with central platform management authorization"
+      "description": "Super Administrators (client write locked)"
     },
     "/sessions/{sessionId}": {
       "schema": "Session",
-      "description": "Diagnostic sessions indexed by sessionId"
+      "description": "Private teacher-owned diagnostic sessions"
+    },
+    "/publicSessions/{sessionId}": {
+      "schema": "PublicSession",
+      "description": "Minimal public session metadata for students (contains opaque ownerRef only)"
+    },
+    "/ownerLinks/{ownerRef}": {
+      "schema": "OwnerLink",
+      "description": "Opaque mapping between ownerRef and teacherId/sessionId"
+    },
+    "/sessions/{sessionId}/presence/{studentAuthUid}": {
+      "schema": "Presence",
+      "description": "Live session heartbeat per anonymous student UID"
+    },
+    "/sessions/{sessionId}/violationEvents/{eventId}": {
+      "schema": "ViolationEvent",
+      "description": "Advisory proctoring events keyed by {studentAuthUid}_{seq}"
     },
     "/submissions/{submissionId}": {
       "schema": "Submission",
-      "description": "Students submissions mapped with AI-supported diagnostics"
+      "description": "Student diagnostic submissions (Option A schema)"
     },
     "/forms/{formId}": {
       "schema": "Form",
-      "description": "Collection of forms and templates"
+      "description": "Custom questionnaire forms and standard templates"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Teacher/admin submitted reports with strict imageUrl validation"
+    },
+    "/config/{configId}": {
+      "schema": "LandingConfig",
+      "description": "Public landing page configuration (config/landingPage)"
     },
     "/stats/{statId}": {
       "schema": "Stats",
-      "description": "Cache of live SaaS activity statistics counters"
+      "description": "Cached platform counters (stats/public)"
+    },
+    "/migrationOrphans/{orphanId}": {
+      "schema": "MigrationOrphan",
+      "description": "Legacy orphan records preserved for admin audit"
     },
     "/users/{teacherId}/notificationSettings/{settingId}": {
       "schema": "NotificationSettings",
-      "description": "Opt-in pedagogical notification channel preferences isolated to owner teacher"
+      "description": "Opt-in pedagogical notification preferences"
     },
     "/users/{teacherId}/notifications/{notificationId}": {
       "schema": "PedagogicalNotification",
-      "description": "Pedagogical notifications center stream isolated to owner teacher"
+      "description": "Pedagogical notifications stream per teacher"
     }
   }
 }

@@ -9,8 +9,6 @@ import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
-import { initializeApp as initFirebaseApp } from 'firebase/app';
-import { getFirestore as initFirestore, doc as fDoc, setDoc as fSetDoc } from 'firebase/firestore';
 import { StudentSubmission, ThinkingStyle, Teacher, DiagnosticSession } from './src/types';
 import {
   evaluateAndDispatchSessionNotifications,
@@ -25,6 +23,30 @@ import {
   sendPedagogicalEmail,
   sendPedagogicalWhatsApp,
 } from './src/server/notificationsService';
+import {
+  CONTENT_TRUTH_DISCLAIMER,
+  getAnalysisHmacKey,
+  signAnalysisEnvelope,
+  verifyAnalysisEnvelope,
+} from './src/server/canonicalSigning';
+import {
+  verifyAppCheckToken,
+  verifyFirebaseIdToken,
+  type VerifiedAppCheckResult,
+  type VerifiedFirebaseUser,
+} from './src/server/firebaseTokenVerifier';
+import {
+  assertAllowedGeminiModel,
+  FALLBACK_FREE_GEMINI_MODEL,
+  PRIMARY_FREE_GEMINI_MODEL,
+  redactStudentAnswersForAI,
+  redactStudentPiiFromText,
+} from './src/server/piiGuard';
+import { createRateLimiter } from './src/server/rateLimiter';
+import {
+  isAdminActiveViaRest,
+  isTeacherActiveViaRest,
+} from './src/server/firestoreRestClient';
 
 // Load environmental variables
 dotenv.config();
@@ -33,31 +55,24 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT) || 3000;
 
-// Initialize Firestore server-side helper if configuration is available
-let serverDb: any = null;
 let firebaseApiKey = '';
 try {
   const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
   if (fs.existsSync(firebaseConfigPath)) {
     const configData = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
     firebaseApiKey = configData.apiKey || '';
-    const fApp = initFirebaseApp(configData);
-    serverDb = initFirestore(fApp, configData.firestoreDatabaseId);
-    console.log("Server-side Firestore client initialized successfully.");
   }
 } catch (err) {
-  console.error("Failed to initialize server-side Firestore helper:", err);
+  console.error('Failed to read firebase-applet-config.json:', err);
 }
 
-// Helper to push stats to Firestore
-async function syncStatsToFirestore(statsObj: any) {
-  // Disabling server-side unauthenticated writes to avoid PERMISSION_DENIED.
-  // Stats are now synchronized from the authenticated Teacher Dashboard instead.
+// Helper to push stats to Firestore (Option A: handled by authenticated client, never unauthenticated server)
+async function syncStatsToFirestore(_statsObj: any) {
   return;
 }
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ limit: '2mb', extended: true }));
 const distImagesDir = path.join(process.cwd(), 'dist', 'assets', 'images');
 const srcImagesDir = path.join(process.cwd(), 'src', 'assets', 'images');
 if (fs.existsSync(distImagesDir)) {
@@ -65,14 +80,18 @@ if (fs.existsSync(distImagesDir)) {
 }
 app.use('/src/assets/images', express.static(srcImagesDir));
 
-// Initialize store file
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'submissions.json');
-const TEACHERS_FILE = path.join(DATA_DIR, 'teachers.json');
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
-const LANDING_PAGE_FILE = path.join(DATA_DIR, 'landing_page.json');
-const FORMS_FILE = path.join(DATA_DIR, 'forms.json');
+function resolveDataDir(): string {
+  return process.env.PHILOSCAN_DATA_DIR
+    ? path.resolve(process.env.PHILOSCAN_DATA_DIR)
+    : path.join(process.cwd(), 'data');
+}
+const getDbFile = () => path.join(resolveDataDir(), 'submissions.json');
+const getTeachersFile = () => path.join(resolveDataDir(), 'teachers.json');
+const getSessionsFile = () => path.join(resolveDataDir(), 'sessions.json');
+const getReportsFile = () => path.join(resolveDataDir(), 'reports.json');
+const getLandingPageFile = () => path.join(resolveDataDir(), 'landing_page.json');
+const getFormsFile = () => path.join(resolveDataDir(), 'forms.json');
+const getMonitoringFile = () => path.join(resolveDataDir(), 'monitoring.json');
 
 // Pre-seeded demo account elements
 const INITIAL_SEED_TEACHERS: Teacher[] = [
@@ -279,24 +298,31 @@ const INITIAL_SEED_SUBMISSIONS: StudentSubmission[] = [
   }
 ];
 
-// Ensure DB exists and is loaded
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(INITIAL_SEED_SUBMISSIONS, null, 2), 'utf-8');
-}
-if (!fs.existsSync(TEACHERS_FILE)) {
-  fs.writeFileSync(TEACHERS_FILE, JSON.stringify(INITIAL_SEED_TEACHERS, null, 2), 'utf-8');
-}
-if (!fs.existsSync(SESSIONS_FILE)) {
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(INITIAL_SEED_SESSIONS, null, 2), 'utf-8');
-}
-if (!fs.existsSync(REPORTS_FILE)) {
-  fs.writeFileSync(REPORTS_FILE, JSON.stringify([], null, 2), 'utf-8');
-}
-if (!fs.existsSync(FORMS_FILE)) {
-  fs.writeFileSync(FORMS_FILE, JSON.stringify([], null, 2), 'utf-8');
+function ensureDataFilesExist() {
+  const dataDir = resolveDataDir();
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  const dbFile = getDbFile();
+  const teachersFile = getTeachersFile();
+  const sessionsFile = getSessionsFile();
+  const reportsFile = getReportsFile();
+  const formsFile = getFormsFile();
+  if (!fs.existsSync(dbFile)) {
+    fs.writeFileSync(dbFile, JSON.stringify(INITIAL_SEED_SUBMISSIONS, null, 2), 'utf-8');
+  }
+  if (!fs.existsSync(teachersFile)) {
+    fs.writeFileSync(teachersFile, JSON.stringify(INITIAL_SEED_TEACHERS, null, 2), 'utf-8');
+  }
+  if (!fs.existsSync(sessionsFile)) {
+    fs.writeFileSync(sessionsFile, JSON.stringify(INITIAL_SEED_SESSIONS, null, 2), 'utf-8');
+  }
+  if (!fs.existsSync(reportsFile)) {
+    fs.writeFileSync(reportsFile, JSON.stringify([], null, 2), 'utf-8');
+  }
+  if (!fs.existsSync(formsFile)) {
+    fs.writeFileSync(formsFile, JSON.stringify([], null, 2), 'utf-8');
+  }
 }
 
 let submissionsWriteQueue: Promise<any> = Promise.resolve();
@@ -309,6 +335,7 @@ export interface UserReport {
   id: string; // e.g. "REP-1001"
   timestamp: string;
   senderName?: string;
+  reporterUid?: string;
   email: string;
   reportType: 'tech_error' | 'form_error' | 'analytics_error' | 'dev_suggestion' | 'new_feature' | 'general_comment';
   title: string;
@@ -318,9 +345,11 @@ export interface UserReport {
 }
 
 async function loadReports(): Promise<UserReport[]> {
+  ensureDataFilesExist();
   try {
-    if (fs.existsSync(REPORTS_FILE)) {
-      const data = await fs.promises.readFile(REPORTS_FILE, 'utf-8');
+    const file = getReportsFile();
+    if (fs.existsSync(file)) {
+      const data = await fs.promises.readFile(file, 'utf-8');
       return JSON.parse(data);
     }
   } catch (err) {
@@ -330,11 +359,13 @@ async function loadReports(): Promise<UserReport[]> {
 }
 
 async function saveReports(data: UserReport[]): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = reportsWriteQueue.then(async () => {
     try {
-      const tempFile = REPORTS_FILE + '.tmp';
+      const target = getReportsFile();
+      const tempFile = target + '.tmp';
       await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempFile, REPORTS_FILE);
+      await fs.promises.rename(tempFile, target);
     } catch (err) {
       console.error('Error saving reports asynchronously:', err);
       throw err;
@@ -347,34 +378,94 @@ async function saveReports(data: UserReport[]): Promise<void> {
 }
 
 // ==================== ADMINISTRATIVE MIDDLEWARE & SECURITY REGISTRY ====================
+
+export interface SecurityVerificationHooks {
+  verifyIdToken?: (token: string) => Promise<VerifiedFirebaseUser | null>;
+  verifyAppCheck?: (tokenHeader: string | undefined | null) => Promise<VerifiedAppCheckResult>;
+  checkTeacherActive?: (uid: string, idToken: string) => Promise<{ exists: boolean; isDisabled: boolean }>;
+  checkAdminActive?: (uid: string, email: string, emailVerified: boolean, idToken: string) => Promise<boolean>;
+}
+
+const defaultHooks: SecurityVerificationHooks = {
+  verifyIdToken: (token) => verifyFirebaseIdToken(token),
+  verifyAppCheck: (tokenHeader) => verifyAppCheckToken(tokenHeader),
+  checkTeacherActive: (uid, idToken) => isTeacherActiveViaRest(uid, idToken),
+  checkAdminActive: (uid, email, emailVerified, idToken) => isAdminActiveViaRest(uid, email, emailVerified, idToken),
+};
+
+let activeSecurityHooks: SecurityVerificationHooks = { ...defaultHooks };
+
+export function setSecurityTestHooks(hooks: Partial<SecurityVerificationHooks>): void {
+  activeSecurityHooks = { ...defaultHooks, ...hooks };
+}
+
+export function resetSecurityTestHooks(): void {
+  activeSecurityHooks = { ...defaultHooks };
+}
+
 const activeAdminTokens = new Set<string>();
-const EPHEMERAL_HMAC_FALLBACK = crypto.randomBytes(32).toString('hex');
-const ADMIN_TOKEN_HMAC_KEY =
-  process.env.ADMIN_SECRET_KEY ||
-  process.env.GEMINI_API_KEY ||
-  EPHEMERAL_HMAC_FALLBACK;
+
+function getTokenSigningKey(): string {
+  return getAnalysisHmacKey();
+}
 
 function isValidAdminSecret(secret?: string): boolean {
   if (!secret || typeof secret !== 'string') return false;
   const trimmed = secret.trim();
-  const configured = process.env.ADMIN_SECRET_KEY;
-  if (configured) {
-    return trimmed === configured || trimmed === 'PhiloScan1';
+  const configured = (process.env.ADMIN_SECRET_KEY || '').trim();
+  if (!configured || configured === 'REPLACE_WITH_STRONG_ADMIN_SECRET' || configured.length < 8) {
+    return false;
   }
-  return trimmed === 'philoscan2026' || trimmed === 'PhiloScan1';
+  const actualHash = crypto.createHash('sha256').update(trimmed, 'utf8').digest();
+  const expectedHash = crypto.createHash('sha256').update(configured, 'utf8').digest();
+  return crypto.timingSafeEqual(actualHash, expectedHash);
 }
 
-function issueAdminToken(): string {
+function isValidReportImageUrl(url: unknown): boolean {
+  if (url === undefined || url === null || url === '') return true;
+  if (typeof url !== 'string') return false;
+  if (url.length <= 500 && /^https:\/\/[^\s<>"']+$/.test(url)) {
+    return true;
+  }
+  if (url.length <= 250_000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(url)) {
+    return true;
+  }
+  return false;
+}
+
+function sanitizePublicSession(session: DiagnosticSession): Record<string, any> {
+  return {
+    sessionId: session.sessionId,
+    ownerRef: session.ownerRef || '',
+    title: session.title || '',
+    institution: session.institution || '',
+    level: session.level || '',
+    stream: session.stream || '',
+    class: (session as any).class || session.classNumber || '',
+    classNumber: session.classNumber || '',
+    province: session.province || '',
+    isActive: session.isActive !== false && !session.isFrozen,
+    isFrozen: Boolean(session.isFrozen),
+    supervisedMode: Boolean(session.supervisedMode),
+    formId: session.formId || 'official-perceptions',
+    formTitle: session.formTitle || 'تشخيص التصورات حول الفلسفة',
+    questions: session.questions,
+    createdAt: session.createdAt,
+  };
+}
+
+function issueAdminToken(uid = 'TCH-ADMIN', email = 'phillofikr@gmail.com'): string {
   const payload = Buffer.from(
     JSON.stringify({
       role: 'admin',
-      email: 'phillofikr@gmail.com',
-      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
-      nonce: crypto.randomBytes(8).toString('hex')
+      uid,
+      email: email.toLowerCase().trim(),
+      exp: Date.now() + 12 * 60 * 60 * 1000,
+      nonce: crypto.randomBytes(12).toString('hex')
     })
   ).toString('base64url');
   const sig = crypto
-    .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
+    .createHmac('sha256', getTokenSigningKey())
     .update(payload)
     .digest('base64url');
   const token = `ps_adm_${payload}.${sig}`;
@@ -382,130 +473,12 @@ function issueAdminToken(): string {
   return token;
 }
 
-function verifyAdminToken(token: unknown): boolean {
-  if (!token || typeof token !== 'string') return false;
-  const clean = token.trim();
-  if (!clean) return false;
-  if (activeAdminTokens.has(clean)) return true;
-
-  if (!clean.startsWith('ps_adm_')) return false;
-  const raw = clean.slice('ps_adm_'.length);
-  const dotIdx = raw.indexOf('.');
-  if (dotIdx === -1) return false;
-
-  const payload = raw.slice(0, dotIdx);
-  const sig = raw.slice(dotIdx + 1);
-  if (!payload || !sig) return false;
-
-  try {
-    const expectedSig = crypto
-      .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
-      .update(payload)
-      .digest('base64url');
-    const sigBuf = Buffer.from(sig);
-    const expBuf = Buffer.from(expectedSig);
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-      return false;
-    }
-    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (decoded.role !== 'admin' || !decoded.exp || decoded.exp < Date.now()) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function verifyFirebaseAdminIdToken(idToken: string, expectedEmail: string): Promise<boolean> {
-  if (!idToken || !firebaseApiKey) return false;
-  try {
-    const resp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken })
-      }
-    );
-    if (!resp.ok) return false;
-    const data = await resp.json();
-    const user = data?.users?.[0];
-    return !!(
-      user &&
-      typeof user.email === 'string' &&
-      user.email.toLowerCase().trim() === expectedEmail.toLowerCase().trim()
-    );
-  } catch (err) {
-    console.warn('Firebase ID token verification check failed:', err);
-    return false;
-  }
-}
-
-function extractAdminToken(req: any): string {
-  const authHeader = req.headers['authorization'] || '';
-  return (
-    authHeader.replace(/^Bearer\s+/i, '').trim() ||
-    (req.query.admin_token as string) ||
-    (req.body?.admin_token as string) ||
-    (req.headers['x-admin-token'] as string) ||
-    ''
-  );
-}
-
-function isAdminAuthorized(req: any): boolean {
-  const token = extractAdminToken(req);
-  if (verifyAdminToken(token)) return true;
-
-  const adminSecret =
-    (req.query.adminSecret as string) ||
-    (req.body?.adminSecret as string) ||
-    (req.headers['x-admin-secret'] as string);
-  if (isValidAdminSecret(adminSecret)) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * Middleware: Verify admin supervisor permissions securely.
- * Protects administrative routes and super admin features on the backend container.
- */
-function requireAdminAuth(req: any, res: any, next: any) {
-  if (isAdminAuthorized(req)) {
-    return next();
-  }
-
-  return res.status(403).json({
-    error: 'غير مصرح بالعملية. يرجى تسجيل الدخول كمسؤول للمنصة باستخدام الرمز السري الصحيح.'
-  });
-}
-
-function issueTeacherToken(teacherId: string, email: string): string {
-  const payload = Buffer.from(
-    JSON.stringify({
-      role: 'teacher',
-      teacherId: String(teacherId || 'TCH-DEMO'),
-      email: String(email || '').toLowerCase().trim(),
-      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
-      nonce: crypto.randomBytes(8).toString('hex')
-    })
-  ).toString('base64url');
-  const sig = crypto
-    .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
-    .update(payload)
-    .digest('base64url');
-  return `ps_tch_${payload}.${sig}`;
-}
-
-function verifyTeacherToken(
-  token: unknown
-): { role: 'teacher'; teacherId: string; email: string } | null {
+function verifyAdminToken(token: unknown): { uid: string; email: string } | null {
   if (!token || typeof token !== 'string') return null;
   const clean = token.trim();
-  if (!clean.startsWith('ps_tch_')) return null;
+  if (!clean || !clean.startsWith('ps_adm_')) return null;
 
-  const raw = clean.slice('ps_tch_'.length);
+  const raw = clean.slice('ps_adm_'.length);
   const dotIdx = raw.indexOf('.');
   if (dotIdx === -1) return null;
 
@@ -515,7 +488,7 @@ function verifyTeacherToken(
 
   try {
     const expectedSig = crypto
-      .createHmac('sha256', ADMIN_TOKEN_HMAC_KEY)
+      .createHmac('sha256', getTokenSigningKey())
       .update(payload)
       .digest('base64url');
     const sigBuf = Buffer.from(sig);
@@ -524,90 +497,125 @@ function verifyTeacherToken(
       return null;
     }
     const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (
-      decoded.role !== 'teacher' ||
-      !decoded.email ||
-      !decoded.exp ||
-      decoded.exp < Date.now()
-    ) {
+    if (decoded.role !== 'admin' || !decoded.exp || decoded.exp < Date.now()) {
+      activeAdminTokens.delete(clean);
       return null;
     }
     return {
-      role: 'teacher',
-      teacherId: String(decoded.teacherId || 'TCH-DEMO'),
-      email: String(decoded.email).toLowerCase().trim()
+      uid: String(decoded.uid || 'TCH-ADMIN'),
+      email: String(decoded.email || 'phillofikr@gmail.com').toLowerCase().trim(),
     };
   } catch {
     return null;
   }
 }
 
-async function verifyFirebaseUserToken(
-  idToken: string
-): Promise<{ uid: string; email: string; emailVerified: boolean } | null> {
-  if (!idToken || !firebaseApiKey) return null;
+function extractBearerToken(req: any): string {
+  const authHeader = String(req.headers['authorization'] || '');
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
+  return (
+    bearer ||
+    String(req.headers['x-firebase-id-token'] || '').trim() ||
+    String(req.headers['x-admin-token'] || '').trim()
+  );
+}
+
+function extractAdminSecretHeader(req: any): string {
+  return String(req.headers['x-admin-secret'] || req.body?.adminSecret || '').trim();
+}
+
+function isAdminAuthorizedSync(req: any): boolean {
+  const token = extractBearerToken(req);
+  if (verifyAdminToken(token)) return true;
+  const adminSecret = extractAdminSecretHeader(req);
+  return isValidAdminSecret(adminSecret);
+}
+
+async function resolveFirebaseAdminActor(req: any): Promise<{ role: 'admin'; uid: string; email: string } | null> {
+  const syncSecret = extractAdminSecretHeader(req);
+  if (isValidAdminSecret(syncSecret)) {
+    return { role: 'admin', uid: 'TCH-ADMIN', email: 'phillofikr@gmail.com' };
+  }
+  const token = extractBearerToken(req);
+  const decodedAdmin = verifyAdminToken(token);
+  if (decodedAdmin) {
+    return { role: 'admin', uid: decodedAdmin.uid, email: decodedAdmin.email };
+  }
+  if (token && token.split('.').length === 3) {
+    const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(token);
+    if (fbUser && !fbUser.isAnonymous && fbUser.emailVerified && fbUser.email) {
+      const checkFn = activeSecurityHooks.checkAdminActive || defaultHooks.checkAdminActive!;
+      const ok = await checkFn(fbUser.uid, fbUser.email, fbUser.emailVerified, token);
+      if (ok) {
+        return { role: 'admin', uid: fbUser.uid, email: fbUser.email };
+      }
+    }
+  }
+  return null;
+}
+
+async function requireAdminAuth(req: any, res: any, next: any) {
   try {
-    const resp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken })
-      }
-    );
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const user = data?.users?.[0];
-    if (!user || typeof user.email !== 'string') return null;
-    return {
-      uid: String(user.localId || ''),
-      email: user.email.toLowerCase().trim(),
-      emailVerified: Boolean(user.emailVerified)
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function requireTeacherOrAdminAuth(req: any, res: any, next: any) {
-  if (isAdminAuthorized(req)) {
-    req.authActor = {
-      role: 'admin',
-      teacherId: 'TCH-ADMIN',
-      email: 'phillofikr@gmail.com'
-    };
-    return next();
-  }
-
-  const bearerToken = extractAdminToken(req);
-  const teacherDecoded = verifyTeacherToken(bearerToken);
-  if (teacherDecoded) {
-    req.authActor = teacherDecoded;
-    return next();
-  }
-
-  const firebaseTokenHeader = String(req.headers['x-firebase-id-token'] || '').trim();
-  const candidateFirebaseToken = firebaseTokenHeader || bearerToken;
-  if (candidateFirebaseToken && candidateFirebaseToken.split('.').length === 3) {
-    const fbUser = await verifyFirebaseUserToken(candidateFirebaseToken);
-    if (fbUser && fbUser.email) {
-      if (fbUser.email === 'phillofikr@gmail.com' && fbUser.emailVerified) {
-        req.authActor = {
-          role: 'admin',
-          teacherId: 'TCH-ADMIN',
-          email: fbUser.email
-        };
-        return next();
-      }
-      const teachers = await loadTeachers();
-      const matched = teachers.find((t) => t.email.toLowerCase() === fbUser.email);
+    const adminActor = await resolveFirebaseAdminActor(req);
+    if (adminActor) {
       req.authActor = {
-        role: 'teacher',
-        teacherId: matched?.id || fbUser.uid || 'TCH-DEMO',
-        email: fbUser.email
+        role: 'admin',
+        uid: adminActor.uid,
+        teacherId: adminActor.uid,
+        email: adminActor.email,
       };
       return next();
     }
+  } catch {
+    // Fall through to 403
+  }
+  return res.status(403).json({
+    error: 'غير مصرح بالعملية. يرجى تسجيل الدخول كمسؤول نشط للمنصة.'
+  });
+}
+
+async function requireTeacherOrAdminAuth(req: any, res: any, next: any) {
+  try {
+    const adminActor = await resolveFirebaseAdminActor(req);
+    if (adminActor) {
+      req.authActor = {
+        role: 'admin',
+        uid: adminActor.uid,
+        teacherId: adminActor.uid,
+        email: adminActor.email,
+      };
+      return next();
+    }
+
+    const token = extractBearerToken(req);
+    if (token && token.split('.').length === 3) {
+      const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(token);
+      if (!fbUser || fbUser.isAnonymous || !fbUser.emailVerified || !fbUser.email) {
+        return res.status(401).json({
+          error: 'يتطلب الوصول حساب أستاذ موثقاً ومفعّلاً عبر Firebase Auth.'
+        });
+      }
+
+      // Fail closed against disabled or missing teacher profile in Firestore REST
+      const checkTeacher = activeSecurityHooks.checkTeacherActive || defaultHooks.checkTeacherActive!;
+      const teacherState = await checkTeacher(fbUser.uid, token);
+      if (!teacherState.exists || teacherState.isDisabled) {
+        return res.status(403).json({
+          error: 'هذا الحساب غير مفعّل أو تم تعطيله من قبل إدارة المنصة.'
+        });
+      }
+
+      req.authActor = {
+        role: 'teacher',
+        uid: fbUser.uid,
+        teacherId: fbUser.uid,
+        email: fbUser.email,
+        firebaseIdToken: token,
+      };
+      return next();
+    }
+  } catch (err) {
+    console.warn('[PhiloScan Auth] Verification failure:', err);
   }
 
   return res.status(401).json({
@@ -615,10 +623,73 @@ async function requireTeacherOrAdminAuth(req: any, res: any, next: any) {
   });
 }
 
+async function requireStudentAppCheckAndAuth(req: any, res: any, next: any) {
+  const appCheckHeader = req.headers['x-firebase-appcheck'] as string | undefined;
+  const appCheckFn = activeSecurityHooks.verifyAppCheck || defaultHooks.verifyAppCheck!;
+  const appCheckRes = await appCheckFn(appCheckHeader);
+  if (!appCheckRes.valid) {
+    return res.status(403).json({
+      error: appCheckRes.reason || 'تعذر التحقق من سلامة تطبيق العميل (App Check).'
+    });
+  }
+
+  const token = extractBearerToken(req);
+  if (!token || token.split('.').length !== 3) {
+    return res.status(401).json({
+      error: 'يرجى تفعيل جلسة التلميذ المؤمنة (Firebase Anonymous Auth) قبل الإرسال.'
+    });
+  }
+
+  const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(token);
+  if (!fbUser || !fbUser.uid) {
+    return res.status(401).json({
+      error: 'رمز جلسة التلميذ غير صالح أو منتهي الصلاحية.'
+    });
+  }
+
+  req.studentActor = {
+    uid: fbUser.uid,
+    isAnonymous: fbUser.isAnonymous,
+    email: fbUser.email,
+  };
+  return next();
+}
+
+const aiRateLimiter = createRateLimiter({
+  keyPrefix: 'ai',
+  windowMs: 60_000,
+  maxPerIp: 25,
+  maxPerUid: 15,
+});
+
+const publicReadRateLimiter = createRateLimiter({
+  keyPrefix: 'public',
+  windowMs: 60_000,
+  maxPerIp: 60,
+});
+
+const authRateLimiter = createRateLimiter({
+  keyPrefix: 'auth',
+  windowMs: 60_000,
+  maxPerIp: 20,
+});
+
+function isActorOwnerOfRecord(actor: any, record: { teacherId?: string; teacher_id?: string; teacherEmail?: string; teacher_email?: string }): boolean {
+  if (!actor) return false;
+  if (actor.role === 'admin') return true;
+  const recUid = String(record.teacherId || record.teacher_id || '').trim();
+  const recEmail = String(record.teacherEmail || record.teacher_email || '').toLowerCase().trim();
+  if (recUid && actor.uid && recUid === actor.uid) return true;
+  if (recEmail && actor.email && recEmail === actor.email.toLowerCase().trim()) return true;
+  return false;
+}
+
 async function loadForms(): Promise<any[]> {
+  ensureDataFilesExist();
   try {
-    if (fs.existsSync(FORMS_FILE)) {
-      const data = await fs.promises.readFile(FORMS_FILE, 'utf-8');
+    const file = getFormsFile();
+    if (fs.existsSync(file)) {
+      const data = await fs.promises.readFile(file, 'utf-8');
       return JSON.parse(data);
     }
   } catch (err) {
@@ -628,11 +699,13 @@ async function loadForms(): Promise<any[]> {
 }
 
 async function saveForms(data: any[]): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = formsWriteQueue.then(async () => {
     try {
-      const tempFile = FORMS_FILE + '.tmp';
+      const target = getFormsFile();
+      const tempFile = target + '.tmp';
       await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempFile, FORMS_FILE);
+      await fs.promises.rename(tempFile, target);
     } catch (err) {
       console.error('Error saving forms asynchronously:', err);
       throw err;
@@ -646,8 +719,9 @@ async function saveForms(data: any[]): Promise<void> {
 
 
 async function loadSubmissions(): Promise<StudentSubmission[]> {
+  ensureDataFilesExist();
   try {
-    const data = await fs.promises.readFile(DB_FILE, 'utf-8');
+    const data = await fs.promises.readFile(getDbFile(), 'utf-8');
     return JSON.parse(data);
   } catch (err) {
     console.error('Error loading submissions asynchronously:', err);
@@ -656,11 +730,13 @@ async function loadSubmissions(): Promise<StudentSubmission[]> {
 }
 
 async function saveSubmissions(data: StudentSubmission[]): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = submissionsWriteQueue.then(async () => {
     try {
-      const tempFile = DB_FILE + '.tmp';
+      const target = getDbFile();
+      const tempFile = target + '.tmp';
       await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempFile, DB_FILE);
+      await fs.promises.rename(tempFile, target);
     } catch (err) {
       console.error('Error saving submissions asynchronously:', err);
       throw err;
@@ -673,8 +749,9 @@ async function saveSubmissions(data: StudentSubmission[]): Promise<void> {
 }
 
 async function loadTeachers(): Promise<Teacher[]> {
+  ensureDataFilesExist();
   try {
-    const data = await fs.promises.readFile(TEACHERS_FILE, 'utf-8');
+    const data = await fs.promises.readFile(getTeachersFile(), 'utf-8');
     return JSON.parse(data);
   } catch (err) {
     console.error('Error loading teachers asynchronously:', err);
@@ -683,11 +760,13 @@ async function loadTeachers(): Promise<Teacher[]> {
 }
 
 async function saveTeachers(data: Teacher[]): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = teachersWriteQueue.then(async () => {
     try {
-      const tempFile = TEACHERS_FILE + '.tmp';
+      const target = getTeachersFile();
+      const tempFile = target + '.tmp';
       await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempFile, TEACHERS_FILE);
+      await fs.promises.rename(tempFile, target);
     } catch (err) {
       console.error('Error saving teachers asynchronously:', err);
       throw err;
@@ -700,8 +779,9 @@ async function saveTeachers(data: Teacher[]): Promise<void> {
 }
 
 async function loadSessions(): Promise<DiagnosticSession[]> {
+  ensureDataFilesExist();
   try {
-    const data = await fs.promises.readFile(SESSIONS_FILE, 'utf-8');
+    const data = await fs.promises.readFile(getSessionsFile(), 'utf-8');
     return JSON.parse(data);
   } catch (err) {
     console.error('Error loading sessions asynchronously:', err);
@@ -710,11 +790,13 @@ async function loadSessions(): Promise<DiagnosticSession[]> {
 }
 
 async function saveSessions(data: DiagnosticSession[]): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = sessionsWriteQueue.then(async () => {
     try {
-      const tempFile = SESSIONS_FILE + '.tmp';
+      const target = getSessionsFile();
+      const tempFile = target + '.tmp';
       await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempFile, SESSIONS_FILE);
+      await fs.promises.rename(tempFile, target);
     } catch (err) {
       console.error('Error saving sessions asynchronously:', err);
       throw err;
@@ -726,7 +808,6 @@ async function saveSessions(data: DiagnosticSession[]): Promise<void> {
   await nextTicket;
 }
 
-const MONITORING_FILE = path.join(DATA_DIR, 'monitoring.json');
 let monitoringWriteQueue: Promise<any> = Promise.resolve();
 
 async function loadMonitoring(): Promise<Record<string, Record<string, {
@@ -737,9 +818,11 @@ async function loadMonitoring(): Promise<Record<string, Record<string, {
   violations: any[];
   reliabilityIndex: number;
 }>>> {
+  ensureDataFilesExist();
   try {
-    if (fs.existsSync(MONITORING_FILE)) {
-      const data = await fs.promises.readFile(MONITORING_FILE, 'utf-8');
+    const file = getMonitoringFile();
+    if (fs.existsSync(file)) {
+      const data = await fs.promises.readFile(file, 'utf-8');
       return JSON.parse(data);
     }
   } catch (err) {
@@ -749,11 +832,13 @@ async function loadMonitoring(): Promise<Record<string, Record<string, {
 }
 
 async function saveMonitoring(data: any): Promise<void> {
+  ensureDataFilesExist();
   const nextTicket = monitoringWriteQueue.then(async () => {
     try {
-      const tempPath = MONITORING_FILE + '.tmp';
+      const target = getMonitoringFile();
+      const tempPath = target + '.tmp';
       await fs.promises.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-      await fs.promises.rename(tempPath, MONITORING_FILE);
+      await fs.promises.rename(tempPath, target);
     } catch (err) {
       console.error('Error saving monitoring data:', err);
     }
@@ -1413,12 +1498,20 @@ async function generateContentWithRetry(
   let lastError: any;
   let forceFallback = false;
 
+  const requestedModel = assertAllowedGeminiModel(
+    typeof params?.model === 'string' && params.model.trim()
+      ? params.model.trim()
+      : PRIMARY_FREE_GEMINI_MODEL
+  );
+  const fallbackModel = assertAllowedGeminiModel(FALLBACK_FREE_GEMINI_MODEL);
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     const useFallbackModel =
-      params?.model === 'gemini-4-hydrogen' && (forceFallback || attempt === retries);
-    const callParams = useFallbackModel
-      ? { ...params, model: 'gemini-3.1-flash-lite' }
-      : params;
+      requestedModel === PRIMARY_FREE_GEMINI_MODEL && (forceFallback || attempt === retries);
+    const callParams = {
+      ...params,
+      model: useFallbackModel ? fallbackModel : requestedModel,
+    };
     const timeoutMs = useFallbackModel ? Math.max(attemptTimeoutMs, 15000) : attemptTimeoutMs;
 
     try {
@@ -1446,7 +1539,7 @@ async function generateContentWithRetry(
         lowerMsg.includes('overloaded') ||
         lowerMsg.includes('rate limit');
 
-      if (isTimeout && params?.model === 'gemini-4-hydrogen') {
+      if (isTimeout && requestedModel === PRIMARY_FREE_GEMINI_MODEL) {
         forceFallback = true;
       }
 
@@ -1492,8 +1585,8 @@ function mapGeminiErrorResponse(err: any, fallbackMessage: string) {
 }
 
 // AI Integration API Route Handler
-async function performAIBasedAnalysis(answers: any) {
-  const baseline = performRuleBasedAnalysis(answers);
+async function performAIBasedAnalysis(rawAnswers: any) {
+  const baseline = performRuleBasedAnalysis(rawAnswers);
   const client = getGeminiClient();
 
   if (!client) {
@@ -1501,19 +1594,20 @@ async function performAIBasedAnalysis(answers: any) {
   }
 
   try {
+    const answers = redactStudentAnswersForAI(rawAnswers);
     const prompt = `أنت خبير تربوي متخصص في ديدكتيك الفلسفة وتحليل تمثلات التلاميذ.
 قم بتحليل إجابات هذا التلميذ على الاستمارة التشخيصية لتحديد تصنيف نمطه الفكري بدقة تامة.
 
-الإجابة المفتوحة عن معنى الفلسفة: "${answers.philosophyMeaning}"
-كيف تشكلت الفكرة: "${answers.sourceOfIdea}"
-الشعور الوجداني: "${answers.feelingWhenHearing}"
-التعليل الوجداني: "${answers.feelingJustification}"
-نمط التفكير مع سؤال الحرية: "${answers.reactionToFreedomQuestion}"
-الأسئلة الفلسفية المختارة: [${(answers.selectedPhilosophicalQuestions || []).join(', ')}]
-درجة تقييم القيمة المعرفية (من 1 إلى 5): ${answers.valueRating}
-الهدف الأساسي من الفلسفة: "${answers.philosophyPrimaryGoal}"
-رد الفعل في نقاش بلا إجابة واحدة: "${answers.debateReaction}"
-هل يتوقع النجاح ولماذا: "${answers.expectSuccess}"
+الإجابة المفتوحة عن معنى الفلسفة: "${answers.philosophyMeaning || ''}"
+كيف تشكلت الفكرة: "${answers.sourceOfIdea || ''}"
+الشعور الوجداني: "${answers.feelingWhenHearing || ''}"
+التعليل الوجداني: "${answers.feelingJustification || ''}"
+نمط التفكير مع سؤال الحرية: "${answers.reactionToFreedomQuestion || ''}"
+الأسئلة الفلسفية المختارة: [${(Array.isArray(answers.selectedPhilosophicalQuestions) ? answers.selectedPhilosophicalQuestions : []).join(', ')}]
+درجة تقييم القيمة المعرفية (من 1 إلى 5): ${answers.valueRating || 3}
+الهدف الأساسي من الفلسفة: "${answers.philosophyPrimaryGoal || ''}"
+رد الفعل في نقاش بلا إجابة واحدة: "${answers.debateReaction || ''}"
+هل يتوقع النجاح ولماذا: "${answers.expectSuccess || ''}"
 
 المؤشرات الأولية المحسوبة كمرجع استرشادي:
 - الخوف المعرفي: ${baseline.metrics.cognitiveFear}%
@@ -1542,7 +1636,7 @@ async function performAIBasedAnalysis(answers: any) {
 
     // Use Promise.race to guarantee we do not block for more than 15000ms
     const geminiCall = generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
+      model: PRIMARY_FREE_GEMINI_MODEL,
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
@@ -1616,36 +1710,64 @@ async function performAIBasedAnalysis(answers: any) {
 
 // ==================== REST ENDPOINTS ====================
 
-// Simple secure logic teacher/admin login
-app.post('/api/teacher/login', async (req, res) => {
+// Verified Firebase Auth login / session sync (never passwordless)
+app.post('/api/teacher/login', authRateLimiter, async (req, res) => {
   try {
-    const { email, fullName, school, regionalAcademy, province, role, specialty, avatar, yearsOfExperience } = req.body;
-    
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'يرجى تقديم بريد إلكتروني صحيح وصالح.' });
-    }
+    const {
+      email,
+      fullName,
+      school,
+      regionalAcademy,
+      province,
+      role,
+      specialty,
+      avatar,
+      yearsOfExperience,
+      adminSecret,
+    } = req.body || {};
+    const firebaseIdToken =
+      String(req.body?.firebaseIdToken || '').trim() || extractBearerToken(req);
 
-    const lowerEmail = email.toLowerCase().trim();
+    const lowerEmail = typeof email === 'string' ? email.toLowerCase().trim() : '';
 
     // Check if Logging in as Admin (Superuser)
-    const isAdmin = lowerEmail === 'phillofikr@gmail.com' || role === 'admin';
-    if (isAdmin) {
-      const { adminSecret, firebaseIdToken } = req.body;
+    const isAdminAttempt = lowerEmail === 'phillofikr@gmail.com' || role === 'admin';
+    if (isAdminAttempt) {
       const isSecretOk = isValidAdminSecret(adminSecret);
-      const isFirebaseVerified = firebaseIdToken
-        ? await verifyFirebaseAdminIdToken(firebaseIdToken, 'phillofikr@gmail.com')
-        : false;
+      let adminUid = 'TCH-ADMIN';
+      let adminEmail = 'phillofikr@gmail.com';
+      let isFirebaseVerified = false;
+
+      if (firebaseIdToken && firebaseIdToken.split('.').length === 3) {
+        const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(
+          firebaseIdToken
+        );
+        if (fbUser && !fbUser.isAnonymous && fbUser.emailVerified && fbUser.email) {
+          const checkAdmin = activeSecurityHooks.checkAdminActive || defaultHooks.checkAdminActive!;
+          isFirebaseVerified = await checkAdmin(
+            fbUser.uid,
+            fbUser.email,
+            fbUser.emailVerified,
+            firebaseIdToken
+          );
+          if (isFirebaseVerified) {
+            adminUid = fbUser.uid;
+            adminEmail = fbUser.email;
+          }
+        }
+      }
 
       if (!isSecretOk && !isFirebaseVerified) {
         return res.status(401).json({
-          error: 'ليس لديك صلاحية الوصول إلى لوحة إدارة فِيلوسكان.'
+          error: 'ليس لديك صلاحية الوصول إلى لوحة إدارة فِيلوسكان.',
         });
       }
 
-      const generatedToken = issueAdminToken();
+      const generatedToken = issueAdminToken(adminUid, adminEmail);
 
       return res.json({
-        email: 'phillofikr@gmail.com',
+        uid: adminUid,
+        email: adminEmail,
         fullName: 'مدير المنصة',
         school: 'الإدارة المركزية للتعليم بوزارة التربية الوطنية',
         regionalAcademy: 'المديرية العامة للمنظومة المعلوماتية',
@@ -1653,102 +1775,129 @@ app.post('/api/teacher/login', async (req, res) => {
         loggedInAt: new Date().toISOString(),
         token: generatedToken,
         role: 'admin',
-        teacherId: 'TCH-ADMIN',
+        teacherId: adminUid,
         specialty: 'الإدارة والإشراف الفلسفي',
         avatar: '',
-        yearsOfExperience: '15'
+        yearsOfExperience: '15',
       });
     }
 
-    if (!fullName || !fullName.trim()) {
-      return res.status(400).json({ error: 'يرجى إدخال الاسم الكامل للأستاذ.' });
+    // Teacher login strictly requires a valid, email-verified Firebase ID Token
+    if (!firebaseIdToken || firebaseIdToken.split('.').length !== 3) {
+      return res.status(401).json({
+        error: 'يتطلب تسجيل الدخول التحقق عبر Firebase Auth (كلمة المرور + تأكيد البريد الإلكتروني).',
+      });
     }
-    if (!school || !school.trim()) {
-      return res.status(400).json({ error: 'يرجى إدخال اسم المؤسسة التعليمية.' });
+
+    const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(
+      firebaseIdToken
+    );
+    if (!fbUser || fbUser.isAnonymous || !fbUser.emailVerified || !fbUser.email) {
+      return res.status(401).json({
+        error: 'رمز المصادقة غير صالح أو البريد الإلكتروني غير مفعّل بعد.',
+      });
     }
-    if (!regionalAcademy || !regionalAcademy.trim()) {
-      return res.status(400).json({ error: 'يرجى إدخال الأكاديمية الجهوية للتربية والتكوين.' });
+
+    if (lowerEmail && lowerEmail !== fbUser.email) {
+      return res.status(403).json({
+        error: 'البريد الإلكتروني المطلوب لا يطابق حساب Firebase المصادق عليه.',
+      });
     }
-    if (!province || !province.trim()) {
-      return res.status(400).json({ error: 'يرجى إدخال العمالة أو الإقليم.' });
+
+    const checkTeacher = activeSecurityHooks.checkTeacherActive || defaultHooks.checkTeacherActive!;
+    const teacherState = await checkTeacher(fbUser.uid, firebaseIdToken);
+    if (!teacherState.exists || teacherState.isDisabled) {
+      return res.status(403).json({
+        error: 'حساب الأستاذ غير مفعّل أو تم تعطيله من قبل إدارة المنصة.',
+      });
     }
 
     const teachers = await loadTeachers();
-    let existing = teachers.find(t => t.email.toLowerCase() === lowerEmail);
+    let existing = teachers.find(
+      (t) => t.uid === fbUser.uid || t.email.toLowerCase() === fbUser.email
+    );
 
     if (!existing) {
-      // Create new Teacher with unique collision-free id TCH-XXX
-      const maxNum = teachers.reduce((max, t) => {
-        const m = /^TCH-(\d+)$/i.exec(String(t.id || ''));
-        return m ? Math.max(max, parseInt(m[1], 10)) : max;
-      }, 0);
-      const nextNum = Math.max(teachers.length, maxNum) + 1;
-      const paddedNum = String(nextNum).padStart(3, '0');
-      const teacherId = `TCH-${paddedNum}`;
-
-      existing = {
-        id: teacherId,
-        fullName: fullName.trim(),
-        email: lowerEmail,
-        school: school.trim(),
-        regionalAcademy: regionalAcademy.trim(),
-        province: province.trim(),
-        createdAt: new Date().toISOString(),
-        specialty: (specialty || '').trim() || 'مادة الفلسفة',
-        avatar: avatar || '',
-        yearsOfExperience: yearsOfExperience || ''
-      };
+      if (!fullName || !String(fullName).trim() || !school || !String(school).trim()) {
+        existing = {
+          id: fbUser.uid,
+          uid: fbUser.uid,
+          fullName: String(fullName || fbUser.email.split('@')[0]).trim(),
+          email: fbUser.email,
+          school: String(school || 'مؤسسة تعليمية').trim(),
+          regionalAcademy: String(regionalAcademy || 'الأكاديمية الجهوية').trim(),
+          province: String(province || 'المديرية الإقليمية').trim(),
+          createdAt: new Date().toISOString(),
+          role: 'teacher',
+          isDisabled: false,
+          specialty: String(specialty || '').trim() || 'مادة الفلسفة',
+          avatar: avatar || '',
+          yearsOfExperience: yearsOfExperience || '',
+        };
+      } else {
+        existing = {
+          id: fbUser.uid,
+          uid: fbUser.uid,
+          fullName: String(fullName).trim(),
+          email: fbUser.email,
+          school: String(school).trim(),
+          regionalAcademy: String(regionalAcademy || '').trim(),
+          province: String(province || '').trim(),
+          createdAt: new Date().toISOString(),
+          role: 'teacher',
+          isDisabled: false,
+          specialty: String(specialty || '').trim() || 'مادة الفلسفة',
+          avatar: avatar || '',
+          yearsOfExperience: yearsOfExperience || '',
+        };
+      }
       teachers.push(existing);
       await saveTeachers(teachers);
-    } else {
-      // Allow updating optional details on subsequent login
-      let changed = false;
-      if (specialty && existing.specialty !== specialty) {
-        existing.specialty = specialty;
-        changed = true;
-      }
-      if (avatar && existing.avatar !== avatar) {
-        existing.avatar = avatar;
-        changed = true;
-      }
-      if (yearsOfExperience && existing.yearsOfExperience !== yearsOfExperience) {
-        existing.yearsOfExperience = yearsOfExperience;
-        changed = true;
-      }
-      if (changed) {
-        await saveTeachers(teachers);
-      }
     }
 
-    res.json({
+    return res.json({
+      uid: fbUser.uid,
       email: existing.email,
       fullName: existing.fullName,
       school: existing.school,
       regionalAcademy: existing.regionalAcademy,
       province: existing.province,
       loggedInAt: new Date().toISOString(),
-      token: issueTeacherToken(existing.id, existing.email),
+      token: firebaseIdToken,
       role: 'teacher',
       teacherId: existing.id,
+      isDisabled: false,
       specialty: existing.specialty,
       avatar: existing.avatar,
-      yearsOfExperience: existing.yearsOfExperience
+      yearsOfExperience: existing.yearsOfExperience,
     });
   } catch (err) {
-    res.status(500).json({ error: 'فشل تدوين دخول الأستاذ.' });
+    res.status(500).json({ error: 'فشل التحقق من دخول الأستاذ.' });
   }
 });
 
-// Create new session
-app.post('/api/sessions', async (req, res) => {
+// Create new session (Authenticated active teacher or admin only)
+app.post('/api/sessions', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
-    const { institution, province, level, stream, classNumber, title, teacherEmail, teacherId, formId, formTitle, supervisedMode, questions } = req.body;
-    if (!institution || !province || !level || !stream || !classNumber || !title || !teacherEmail || !teacherId) {
+    const actor = req.authActor;
+    const {
+      institution,
+      province,
+      level,
+      stream,
+      classNumber,
+      title,
+      formId,
+      formTitle,
+      supervisedMode,
+      questions,
+    } = req.body || {};
+    if (!institution || !province || !level || !stream || !classNumber || !title) {
       return res.status(400).json({ error: 'جميع حقول الجلسة مطلوبة لإنشاء المعرف الفريد.' });
     }
 
     const sessions = await loadSessions();
-    
+
     // Generate unique Session ID (e.g. PS-8KX4Q2)
     let sessionId = '';
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -1758,34 +1907,37 @@ app.post('/api/sessions', async (req, res) => {
       for (let i = 0; i < 6; i++) {
         sessionId += chars.charAt(Math.floor(Math.random() * chars.length));
       }
-      exists = sessions.some(s => s.sessionId === sessionId);
+      exists = sessions.some((s) => s.sessionId === sessionId);
     }
 
     let resolvedQuestions = Array.isArray(questions) ? questions : undefined;
     if (!resolvedQuestions && formId && formId !== 'official-perceptions') {
       const forms = await loadForms();
-      const matchedForm = forms.find(f => f.formId === formId);
+      const matchedForm = forms.find((f) => f.formId === formId);
       if (matchedForm && Array.isArray(matchedForm.questions)) {
         resolvedQuestions = matchedForm.questions;
       }
     }
 
+    const ownerRef = `own_${crypto.randomBytes(16).toString('hex')}`;
     const newSession: DiagnosticSession = {
       sessionId,
-      teacherId,
-      teacherEmail: teacherEmail.toLowerCase(),
-      institution: institution.trim(),
+      ownerRef,
+      teacherId: actor.uid,
+      teacherEmail: actor.email,
+      institution: String(institution).trim(),
       level,
       stream,
-      classNumber: classNumber.trim(),
-      title: title.trim(),
-      province: province.trim(),
+      classNumber: String(classNumber).trim(),
+      title: String(title).trim(),
+      province: String(province).trim(),
       createdAt: new Date().toISOString(),
       formId: formId || 'official-perceptions',
       formTitle: formTitle || 'تشخيص التصورات حول الفلسفة',
       questions: resolvedQuestions,
       supervisedMode: supervisedMode !== undefined ? !!supervisedMode : true,
-      isFrozen: false
+      isFrozen: false,
+      isActive: true,
     };
 
     sessions.push(newSession);
@@ -1798,77 +1950,86 @@ app.post('/api/sessions', async (req, res) => {
   }
 });
 
-// Retrieve sessions with RBAC filters
-app.get('/api/sessions', async (req, res) => {
+// Retrieve sessions with verified RBAC filters
+app.get('/api/sessions', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
-    const { email, role } = req.query;
-    const isAdmin = (role === 'admin' || (email && email.toString().toLowerCase().trim() === 'phillofikr@gmail.com')) && isAdminAuthorized(req);
-
+    const actor = req.authActor;
     const sessions = await loadSessions();
     const teachers = await loadTeachers();
 
-    if (isAdmin) {
-      // Admin sees ALL sessions
-      const enriched = sessions.map(s => {
-        const teacher = teachers.find(t => t.id === s.teacherId || t.email.toLowerCase() === s.teacherEmail.toLowerCase());
+    if (actor.role === 'admin') {
+      const enriched = sessions.map((s) => {
+        const teacher = teachers.find(
+          (t) =>
+            t.id === s.teacherId ||
+            t.uid === s.teacherId ||
+            t.email.toLowerCase() === s.teacherEmail.toLowerCase()
+        );
         return {
           ...s,
-          teacherName: teacher ? teacher.fullName : 'أستاذ موجه'
+          teacherName: teacher ? teacher.fullName : 'أستاذ موجه',
         };
       });
-      return res.json({ sessions: enriched.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) });
+      return res.json({
+        sessions: enriched.sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        ),
+      });
     }
 
-    if (!email) {
-      return res.status(400).json({ error: 'البريد الإلكتروني للأستاذ مطلوب لتصفية الجلسات.' });
-    }
-
-    // Teacher sees only their own sessions
-    const mySessions = sessions.filter(s => s.teacherEmail.toLowerCase() === (email as string).toLowerCase());
-    res.json({ sessions: mySessions.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) });
+    const mySessions = sessions.filter((s) => isActorOwnerOfRecord(actor, s));
+    res.json({
+      sessions: mySessions.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+    });
   } catch (err) {
     res.status(500).json({ error: 'فشل جلب الجلسات الدراسية.' });
   }
 });
 
-// Get single session information (for students accessing the form)
-app.get('/api/sessions/:id', async (req, res) => {
+// Get single session sanitized public metadata (NEVER leaks teacherId/teacherEmail/customWeights)
+app.get('/api/sessions/:id', publicReadRateLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const sessions = await loadSessions();
-    const session = sessions.find(s => s.sessionId.toUpperCase() === id.toUpperCase());
+    const session = sessions.find((s) => s.sessionId.toUpperCase() === id.toUpperCase());
 
     if (!session) {
-      return res.status(404).json({ error: 'عذراً، لم نتمكن من العثور على هذه الجلسة التشخيصية للفلسفة. يرجى مراجعة الرمز مع أستاذ المادة.' });
+      return res.status(404).json({
+        error:
+          'عذراً، لم نتمكن من العثور على هذه الجلسة التشخيصية للفلسفة. يرجى مراجعة الرمز مع أستاذ المادة.',
+      });
     }
 
     let enrichedSession = { ...session };
-    if ((!enrichedSession.questions || enrichedSession.questions.length === 0) && enrichedSession.formId && enrichedSession.formId !== 'official-perceptions') {
+    if (
+      (!enrichedSession.questions || enrichedSession.questions.length === 0) &&
+      enrichedSession.formId &&
+      enrichedSession.formId !== 'official-perceptions'
+    ) {
       const forms = await loadForms();
-      const matchedForm = forms.find(f => f.formId === enrichedSession.formId);
+      const matchedForm = forms.find((f) => f.formId === enrichedSession.formId);
       if (matchedForm && Array.isArray(matchedForm.questions)) {
         enrichedSession.questions = matchedForm.questions;
       }
     }
 
-    res.json({ session: enrichedSession });
+    res.json({ session: sanitizePublicSession(enrichedSession) });
   } catch (err) {
     res.status(500).json({ error: 'فشل جلب معطيات الجلسة.' });
   }
 });
 
 // ==================== FORMS BANK CRUD ENDPOINTS ====================
-app.get('/api/forms', async (req, res) => {
+app.get('/api/forms', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
-    const email = (req.query.email as string || '').trim().toLowerCase();
+    const actor = req.authActor;
     const forms = await loadForms();
-    const filtered = email
-      ? forms.filter(f =>
-          f.isTemplate ||
-          (f.teacherEmail && f.teacherEmail.toLowerCase().trim() === email) ||
-          f.teacherEmail === 'phillofikr@gmail.com'
-        )
-      : forms;
+    const filtered =
+      actor.role === 'admin'
+        ? forms
+        : forms.filter((f) => f.isTemplate || isActorOwnerOfRecord(actor, f));
     res.json({ forms: filtered });
   } catch (err) {
     console.error('Error loading forms:', err);
@@ -1876,42 +2037,62 @@ app.get('/api/forms', async (req, res) => {
   }
 });
 
-app.post('/api/forms', async (req, res) => {
+app.post('/api/forms', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const formPayload = req.body;
     if (!formPayload || !formPayload.formId || !formPayload.title || !Array.isArray(formPayload.questions)) {
       return res.status(400).json({ error: 'بيانات الاستمارة غير مكتملة.' });
     }
 
     const forms = await loadForms();
-    const idx = forms.findIndex(f => f.formId === formPayload.formId);
+    const idx = forms.findIndex((f) => f.formId === formPayload.formId);
     if (idx > -1) {
-      forms[idx] = { ...forms[idx], ...formPayload, updatedAt: new Date().toISOString() };
-    } else {
-      forms.push(formPayload);
+      if (actor.role !== 'admin' && !isActorOwnerOfRecord(actor, forms[idx])) {
+        return res.status(403).json({ error: 'غير مصرح بتعديل استمارة أستاذ آخر.' });
+      }
+      forms[idx] = {
+        ...forms[idx],
+        ...formPayload,
+        teacherId: forms[idx].teacherId || actor.uid,
+        teacherEmail: forms[idx].teacherEmail || actor.email,
+        isTemplate: actor.role === 'admin' ? Boolean(formPayload.isTemplate) : false,
+        updatedAt: new Date().toISOString(),
+      };
+      await saveForms(forms);
+      return res.json({ success: true, form: forms[idx] });
     }
+
+    const createdForm = {
+      ...formPayload,
+      teacherId: actor.uid,
+      teacherEmail: actor.email,
+      isTemplate: actor.role === 'admin' ? Boolean(formPayload.isTemplate) : false,
+      createdAt: formPayload.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    forms.push(createdForm);
     await saveForms(forms);
-    res.json({ success: true, form: formPayload });
+    res.json({ success: true, form: createdForm });
   } catch (err) {
     console.error('Error saving form:', err);
     res.status(500).json({ error: 'فشل حفظ الاستمارة في الخادم.' });
   }
 });
 
-app.delete('/api/forms/:id', async (req, res) => {
+app.delete('/api/forms/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
-    const email = (req.query.email as string || '').trim().toLowerCase();
     const forms = await loadForms();
-    const target = forms.find(f => f.formId === id);
+    const target = forms.find((f) => f.formId === id);
     if (!target) {
       return res.json({ success: true });
     }
-    const isAdmin = isAdminAuthorized(req);
-    if (!isAdmin && email && target.teacherEmail && target.teacherEmail.toLowerCase().trim() !== email) {
+    if (!isActorOwnerOfRecord(actor, target)) {
       return res.status(403).json({ error: 'غير مصرح بحذف استمارة أستاذ آخر.' });
     }
-    const updated = forms.filter(f => f.formId !== id);
+    const updated = forms.filter((f) => f.formId !== id);
     await saveForms(updated);
     res.json({ success: true });
   } catch (err) {
@@ -1920,24 +2101,28 @@ app.delete('/api/forms/:id', async (req, res) => {
   }
 });
 
-// Update session (Admin only)
-app.put('/api/sessions/:id', requireAdminAuth, async (req, res) => {
+// Update session (Owner or Admin)
+app.put('/api/sessions/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
     const { institution, province, level, stream, classNumber, title } = req.body;
 
     const sessions = await loadSessions();
-    const idx = sessions.findIndex(s => s.sessionId.toUpperCase() === id.toUpperCase());
+    const idx = sessions.findIndex((s) => s.sessionId.toUpperCase() === id.toUpperCase());
     if (idx === -1) {
       return res.status(404).json({ error: 'الجلسة غير موجودة.' });
     }
+    if (!isActorOwnerOfRecord(actor, sessions[idx])) {
+      return res.status(403).json({ error: 'غير مصرح بتعديل جلسة تعود لأستاذ آخر.' });
+    }
 
-    if (institution !== undefined) sessions[idx].institution = institution.trim();
-    if (province !== undefined) sessions[idx].province = province.trim();
+    if (institution !== undefined) sessions[idx].institution = String(institution).trim();
+    if (province !== undefined) sessions[idx].province = String(province).trim();
     if (level !== undefined) sessions[idx].level = level;
     if (stream !== undefined) sessions[idx].stream = stream;
-    if (classNumber !== undefined) sessions[idx].classNumber = classNumber.trim();
-    if (title !== undefined) sessions[idx].title = title.trim();
+    if (classNumber !== undefined) sessions[idx].classNumber = String(classNumber).trim();
+    if (title !== undefined) sessions[idx].title = String(title).trim();
 
     await saveSessions(sessions);
     res.json({ success: true, session: sessions[idx] });
@@ -1946,18 +2131,22 @@ app.put('/api/sessions/:id', requireAdminAuth, async (req, res) => {
   }
 });
 
-// Delete session (Admin only)
-app.delete('/api/sessions/:id', requireAdminAuth, async (req, res) => {
+// Delete session (Owner or Admin)
+app.delete('/api/sessions/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
 
     const sessions = await loadSessions();
-    const filtered = sessions.filter(s => s.sessionId.toUpperCase() !== id.toUpperCase());
-
-    if (sessions.length === filtered.length) {
+    const target = sessions.find((s) => s.sessionId.toUpperCase() === id.toUpperCase());
+    if (!target) {
       return res.status(404).json({ error: 'الجلسة المراد حذفها غير موجودة.' });
     }
+    if (!isActorOwnerOfRecord(actor, target)) {
+      return res.status(403).json({ error: 'غير مصرح بحذف جلسة تعود لأستاذ آخر.' });
+    }
 
+    const filtered = sessions.filter((s) => s.sessionId.toUpperCase() !== id.toUpperCase());
     await saveSessions(filtered);
     res.json({ success: true });
   } catch (err) {
@@ -1965,19 +2154,23 @@ app.delete('/api/sessions/:id', requireAdminAuth, async (req, res) => {
   }
 });
 
-// Toggle supervised mode for a session
-app.post('/api/sessions/:id/toggle-supervised', async (req, res) => {
+// Toggle supervised mode for a session (Owner or Admin)
+app.post('/api/sessions/:id/toggle-supervised', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
     const { supervisedMode } = req.body;
     const sessions = await loadSessions();
-    const idx = sessions.findIndex(s => s.sessionId.toUpperCase() === id.toUpperCase());
+    const idx = sessions.findIndex((s) => s.sessionId.toUpperCase() === id.toUpperCase());
     if (idx === -1) {
       return res.status(404).json({ error: 'الجلسة غير موجودة.' });
     }
-    
-    // Toggle or set
-    sessions[idx].supervisedMode = supervisedMode !== undefined ? !!supervisedMode : !sessions[idx].supervisedMode;
+    if (!isActorOwnerOfRecord(actor, sessions[idx])) {
+      return res.status(403).json({ error: 'غير مصرح بتغيير إعدادات جلسة أستاذ آخر.' });
+    }
+
+    sessions[idx].supervisedMode =
+      supervisedMode !== undefined ? !!supervisedMode : !sessions[idx].supervisedMode;
     await saveSessions(sessions);
 
     res.json({ success: true, supervisedMode: sessions[idx].supervisedMode, session: sessions[idx] });
@@ -1986,19 +2179,23 @@ app.post('/api/sessions/:id/toggle-supervised', async (req, res) => {
   }
 });
 
-// Toggle freeze status for a session
-app.post('/api/sessions/:id/toggle-freeze', async (req, res) => {
+// Toggle freeze status for a session (Owner or Admin)
+app.post('/api/sessions/:id/toggle-freeze', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
     const { isFrozen } = req.body;
     const sessions = await loadSessions();
-    const idx = sessions.findIndex(s => s.sessionId.toUpperCase() === id.toUpperCase());
+    const idx = sessions.findIndex((s) => s.sessionId.toUpperCase() === id.toUpperCase());
     if (idx === -1) {
       return res.status(404).json({ error: 'الجلسة غير موجودة.' });
     }
-    
-    // Toggle or set
+    if (!isActorOwnerOfRecord(actor, sessions[idx])) {
+      return res.status(403).json({ error: 'غير مصرح بتجميد جلسة أستاذ آخر.' });
+    }
+
     sessions[idx].isFrozen = isFrozen !== undefined ? !!isFrozen : !sessions[idx].isFrozen;
+    sessions[idx].isActive = !sessions[idx].isFrozen;
     await saveSessions(sessions);
 
     res.json({ success: true, isFrozen: sessions[idx].isFrozen, session: sessions[idx] });
@@ -2007,17 +2204,21 @@ app.post('/api/sessions/:id/toggle-freeze', async (req, res) => {
   }
 });
 
-// Update custom severity weights for a session
-app.post('/api/sessions/:id/update-weights', async (req, res) => {
+// Update custom severity weights for a session (Owner or Admin)
+app.post('/api/sessions/:id/update-weights', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
     const { customWeights } = req.body;
     const sessions = await loadSessions();
-    const idx = sessions.findIndex(s => s.sessionId.toUpperCase() === id.toUpperCase());
+    const idx = sessions.findIndex((s) => s.sessionId.toUpperCase() === id.toUpperCase());
     if (idx === -1) {
       return res.status(404).json({ error: 'الجلسة غير موجودة.' });
     }
-    
+    if (!isActorOwnerOfRecord(actor, sessions[idx])) {
+      return res.status(403).json({ error: 'غير مصرح بتعديل أوزان جلسة أستاذ آخر.' });
+    }
+
     sessions[idx].customWeights = customWeights;
     await saveSessions(sessions);
 
@@ -2027,94 +2228,103 @@ app.post('/api/sessions/:id/update-weights', async (req, res) => {
   }
 });
 
-// Update student proctoring heartbeat
-app.post('/api/sessions/:id/monitoring/heartbeat', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { studentName, status, violations, reliabilityIndex } = req.body;
-    if (!studentName) {
-      return res.status(400).json({ error: 'اسم التلميذ مطلوب لمزامنة حالة المراقبة.' });
+// Update student advisory proctoring heartbeat (Authenticated student + App Check)
+app.post(
+  '/api/sessions/:id/monitoring/heartbeat',
+  publicReadRateLimiter,
+  requireStudentAppCheckAndAuth,
+  async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { studentName, status, violations, reliabilityIndex } = req.body || {};
+      if (!studentName) {
+        return res.status(400).json({ error: 'اسم التلميذ مطلوب لمزامنة حالة المراقبة.' });
+      }
+
+      const sessionId = id.toUpperCase();
+      const studentUid = req.studentActor.uid;
+      const monitoringData = await loadMonitoring();
+      if (!monitoringData[sessionId]) {
+        monitoringData[sessionId] = {};
+      }
+
+      const now = new Date().toISOString();
+      const boundedViolations = Array.isArray(violations) ? violations.slice(0, 50) : [];
+      monitoringData[sessionId][studentUid] = {
+        studentName: String(studentName).trim().slice(0, 100),
+        status: status || 'يجيب حالياً',
+        lastActive: now,
+        joinedAt: monitoringData[sessionId][studentUid]?.joinedAt || now,
+        violations: boundedViolations,
+        reliabilityIndex: typeof reliabilityIndex === 'number' ? reliabilityIndex : 100,
+      };
+
+      await saveMonitoring(monitoringData);
+      res.json({ success: true, advisoryOnly: true });
+    } catch (err) {
+      console.error('Error recording heartbeat:', err);
+      res.status(500).json({ error: 'فشل تحديث نبض المراقبة.' });
     }
-
-    const sessionId = id.toUpperCase();
-    const monitoringData = await loadMonitoring();
-    if (!monitoringData[sessionId]) {
-      monitoringData[sessionId] = {};
-    }
-
-    const now = new Date().toISOString();
-    monitoringData[sessionId][studentName] = {
-      studentName,
-      status: status || 'يجيب حالياً',
-      lastActive: now,
-      joinedAt: monitoringData[sessionId][studentName]?.joinedAt || now,
-      violations: violations || [],
-      reliabilityIndex: typeof reliabilityIndex === 'number' ? reliabilityIndex : 100
-    };
-
-    await saveMonitoring(monitoringData);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Error recording heartbeat:', err);
-    res.status(500).json({ error: 'فشل تحديث نبض المراقبة.' });
   }
-});
+);
 
-// Get session monitoring data
-app.get('/api/sessions/:id/monitoring', async (req, res) => {
+// Get session monitoring data (Owner or Admin only)
+app.get('/api/sessions/:id/monitoring', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
     const sessionId = id.toUpperCase();
     const monitoringData = await loadMonitoring();
     const sessions = await loadSessions();
-    const session = sessions.find(s => s.sessionId.toUpperCase() === sessionId);
-    
+    const session = sessions.find((s) => s.sessionId.toUpperCase() === sessionId);
+
     if (!session) {
       return res.status(404).json({ error: 'الجلسة غير موجودة' });
+    }
+    if (!isActorOwnerOfRecord(actor, session)) {
+      return res.status(403).json({ error: 'غير مصرح بمشاهدة مراقبة جلسة أستاذ آخر.' });
     }
 
     const sessionStudents = monitoringData[sessionId] || {};
     const studentsList = Object.values(sessionStudents);
 
-    // Calculate aggregations
-    // Connected students: last active in the last 20 seconds, and not completed
     const nowTime = Date.now();
-    const connectedCount = studentsList.filter(s => {
-      const isRecent = (nowTime - new Date(s.lastActive).getTime()) < 20000;
+    const connectedCount = studentsList.filter((s) => {
+      const isRecent = nowTime - new Date(s.lastActive).getTime() < 90_000;
       return isRecent && s.status !== 'أنهى الاستمارة';
     }).length;
 
-    const submittedCount = studentsList.filter(s => s.status === 'أنهى الاستمارة').length;
+    const submittedCount = studentsList.filter((s) => s.status === 'أنهى الاستمارة').length;
 
     let totalViolations = 0;
     const allViolations: any[] = [];
-    
-    studentsList.forEach(s => {
+
+    studentsList.forEach((s) => {
       if (s.violations && Array.isArray(s.violations)) {
         s.violations.forEach((v: any) => {
-          totalViolations += (v.count || 1);
+          totalViolations += v.count || 1;
           allViolations.push({
             studentName: s.studentName,
             type: v.type,
             time: v.time,
             duration: v.duration,
-            count: v.count
+            count: v.count,
           });
         });
       }
     });
 
-    // Sort recent violations chronologically (latest first)
     allViolations.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
     res.json({
       success: true,
+      advisoryOnly: true,
       supervisedMode: !!session.supervisedMode,
       students: sessionStudents,
       connectedStudentsCount: connectedCount,
       submittedCount,
       totalViolationsCount: totalViolations,
-      recentViolations: allViolations.slice(0, 15) // send last 15
+      recentViolations: allViolations.slice(0, 15),
     });
   } catch (err) {
     console.error('Error fetching monitoring data:', err);
@@ -2203,13 +2413,13 @@ function performCustomFormRuleBasedAnalysis(
   };
 }
 
-// Custom Forms AI-Based Analysis
+// Custom Forms AI-Based Analysis (PII-redacted before Gemini call)
 async function performCustomFormAIBasedAnalysis(
-  answers: Record<string, any>,
+  rawAnswers: Record<string, any>,
   questionLabels: Record<string, string>,
   questionMeta?: Record<string, { label?: string; dimension?: string; weight?: number; type?: string }>
 ) {
-  const baseline = performCustomFormRuleBasedAnalysis(answers, questionLabels, questionMeta);
+  const baseline = performCustomFormRuleBasedAnalysis(rawAnswers, questionLabels, questionMeta);
   const client = getGeminiClient();
 
   if (!client) {
@@ -2217,12 +2427,17 @@ async function performCustomFormAIBasedAnalysis(
   }
 
   try {
+    const answers = redactStudentAnswersForAI(rawAnswers);
     const compiledQA = Object.entries(answers)
       .map(([qid, val]) => {
         const meta = questionMeta?.[qid];
-        const questionText = meta?.label || questionLabels[qid] || 'سؤال';
-        const dimNote = meta?.dimension ? ` [المحور: ${meta.dimension} · الوزن: ${meta.weight || 3}/5]` : '';
-        const formattedVal = formatCustomAnswerValue(val);
+        const questionText = redactStudentPiiFromText(
+          meta?.label || questionLabels[qid] || 'سؤال'
+        );
+        const dimNote = meta?.dimension
+          ? ` [المحور: ${meta.dimension} · الوزن: ${meta.weight || 3}/5]`
+          : '';
+        const formattedVal = redactStudentPiiFromText(formatCustomAnswerValue(val));
         return `السؤال${dimNote}: "${questionText}"\nجواب التلميذ: "${formattedVal}"`;
       })
       .join('\n\n');
@@ -2261,7 +2476,7 @@ ${compiledQA}
 }`;
 
     const response = await generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
+      model: PRIMARY_FREE_GEMINI_MODEL,
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
@@ -2307,7 +2522,7 @@ ${compiledQA}
       criticalThinking: Number(parsed.criticalThinking) || baseline.metrics.criticalThinking,
       learningReadiness: Number(parsed.learningReadiness) || baseline.metrics.learningReadiness
     };
-    const deep = buildDeepDiagnosticEnrichment(answers, finalMetrics, finalClassification, 100, [], questionLabels, questionMeta);
+    const deep = buildDeepDiagnosticEnrichment(rawAnswers, finalMetrics, finalClassification, 100, [], questionLabels, questionMeta);
 
     return {
       metrics: finalMetrics,
@@ -2325,22 +2540,134 @@ ${compiledQA}
   }
 }
 
-// Endpoint for submissions (Add new diagonal report with Multi-Tenant binding)
-// Mount both routes to prevent proxy/Vite trailing slash redirect GET fallback bugs
-const handlePostSubmission = async (req: express.Request, res: express.Response) => {
-  const reqId = Math.random().toString(36).substring(2, 8).toUpperCase();
-  console.log(`[Server:handlePostSubmission:${reqId}] Incoming POST submission request received.`);
+async function requireStudentOrTeacherSubmissionAuth(req: any, res: any, next: any) {
   try {
-    const { studentName, answers, sessionId, questionLabels, questionMeta } = req.body;
-    console.log(`[Server:handlePostSubmission:${reqId}] Payload extracted:`, {
-      studentName,
-      hasAnswers: !!answers,
-      sessionId,
-      hasCustomLabels: !!questionLabels
-    });
+    const adminActor = await resolveFirebaseAdminActor(req);
+    if (adminActor) {
+      req.authActor = {
+        role: 'admin',
+        uid: adminActor.uid,
+        teacherId: adminActor.uid,
+        email: adminActor.email,
+      };
+      return next();
+    }
+
+    const token = extractBearerToken(req);
+    if (token && token.split('.').length === 3) {
+      const fbUser = await (activeSecurityHooks.verifyIdToken || defaultHooks.verifyIdToken)!(token);
+      if (fbUser && !fbUser.isAnonymous && fbUser.emailVerified && fbUser.email) {
+        const checkTeacher = activeSecurityHooks.checkTeacherActive || defaultHooks.checkTeacherActive!;
+        const teacherState = await checkTeacher(fbUser.uid, token);
+        if (!teacherState.exists || teacherState.isDisabled) {
+          return res.status(403).json({
+            error: 'حساب الأستاذ معطل أو غير مفعّل.'
+          });
+        }
+        req.authActor = {
+          role: 'teacher',
+          uid: fbUser.uid,
+          teacherId: fbUser.uid,
+          email: fbUser.email,
+          firebaseIdToken: token,
+        };
+        return next();
+      }
+    }
+  } catch {
+    // Fall through to student App Check + Auth validation
+  }
+  return requireStudentAppCheckAndAuth(req, res, next);
+}
+
+// Option A public student AI scoring endpoint (returns signed envelope over HTTPS only; zero Firestore writes)
+app.post(
+  '/api/submissions/analyze-public',
+  publicReadRateLimiter,
+  requireStudentAppCheckAndAuth,
+  aiRateLimiter,
+  async (req: any, res) => {
+    try {
+      const { answers, sessionId, questionLabels, questionMeta, violations, reliabilityIndex } = req.body || {};
+      if (!answers || typeof answers !== 'object' || !sessionId) {
+        return res.status(400).json({ error: 'بيانات الإجابات ومعرّف الجلسة مطلوبة للتحليل.' });
+      }
+
+      const targetSessionId = String(sessionId).toUpperCase().trim();
+      const studentAuthUid = String(req.studentActor.uid);
+      const submissionId = `${targetSessionId}_${studentAuthUid}`;
+
+      const sessions = await loadSessions();
+      const matchedSession = sessions.find((s) => s.sessionId.toUpperCase() === targetSessionId);
+      if (matchedSession && matchedSession.isFrozen) {
+        return res.status(403).json({
+          error: 'عذراً، هذه الجلسة التشخيصية مجمدة حالياً ولا تقبل ردوداً جديدة.',
+        });
+      }
+
+      const diagnosis =
+        questionLabels && Object.keys(questionLabels).length > 0
+          ? await performCustomFormAIBasedAnalysis(answers, questionLabels, questionMeta)
+          : await performAIBasedAnalysis(answers);
+
+      const finalReliability = typeof reliabilityIndex === 'number' ? reliabilityIndex : 100;
+      const finalViolations = Array.isArray(violations) ? violations.slice(0, 50) : [];
+      const deepEnrichment = buildDeepDiagnosticEnrichment(
+        answers,
+        diagnosis.metrics,
+        diagnosis.classification,
+        finalReliability,
+        finalViolations,
+        questionLabels,
+        questionMeta
+      );
+      const enrichedDiagnosis = {
+        ...diagnosis,
+        ...deepEnrichment,
+        pedagogicalRecommendationsList:
+          diagnosis.pedagogicalRecommendationsList && diagnosis.pedagogicalRecommendationsList.length > 0
+            ? diagnosis.pedagogicalRecommendationsList
+            : deepEnrichment.remedialPlan.map((step) => `${step.phase}: ${step.action}`),
+      };
+
+      const analysisOrigin: 'gemini' | 'heuristic' =
+        diagnosis.analysisSource === 'gemini' ? 'gemini' : 'heuristic';
+
+      const signedEnvelope = signAnalysisEnvelope({
+        submissionId,
+        sessionId: targetSessionId,
+        studentAuthUid,
+        answers,
+        analysis: enrichedDiagnosis,
+        analysisOrigin,
+      });
+
+      return res.json({
+        success: true,
+        submissionId,
+        sessionId: targetSessionId,
+        studentAuthUid,
+        analysis: enrichedDiagnosis,
+        signedEnvelope,
+        signatureIntegrity: 'valid',
+        analysisOrigin,
+        contentTruthNote: CONTENT_TRUTH_DISCLAIMER,
+      });
+    } catch (err: any) {
+      console.error('Error in POST /api/submissions/analyze-public:', err);
+      const mapped = mapGeminiErrorResponse(err, 'تعذر إتمام التحليل التشخيصي للإجابات.');
+      return res.status(mapped.httpStatus).json({ error: mapped.error });
+    }
+  }
+);
+
+// Endpoint for submissions (Add new diagnostic report with Multi-Tenant & UID binding)
+const handlePostSubmission = async (req: any, res: express.Response) => {
+  const reqId = Math.random().toString(36).substring(2, 8).toUpperCase();
+  try {
+    const { studentName, answers, sessionId, questionLabels, questionMeta } = req.body || {};
 
     if (!studentName || !answers || !sessionId) {
-      console.warn(`[Server:handlePostSubmission:${reqId}] Missing required payload fields!`);
       return res.status(400).json({ error: 'من فضلك أدخل الاسم ورمز الجلسة الفعالة وكافة البيانات.' });
     }
 
@@ -2423,14 +2750,33 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
       }
     }
 
+    const actorUid = String(req.studentActor?.uid || req.authActor?.uid || 'anon');
+    const deterministicSubId = `${targetSessionId}_${actorUid}`;
+    const resolvedSubmissionId =
+      req.studentActor && !req.authActor
+        ? deterministicSubId
+        : clientSubmissionId || deterministicSubId;
+    const analysisOrigin: 'gemini' | 'heuristic' =
+      diagnosis.analysisSource === 'gemini' ? 'gemini' : 'heuristic';
+    const signedEnvelope = signAnalysisEnvelope({
+      submissionId: resolvedSubmissionId,
+      sessionId: targetSessionId,
+      studentAuthUid: actorUid,
+      answers,
+      analysis: enrichedDiagnosis,
+      analysisOrigin,
+    });
+
     const newSubmission: StudentSubmission = {
-      id: clientSubmissionId || ('sub_' + Math.random().toString(36).substr(2, 9)),
+      id: resolvedSubmissionId,
+      studentAuthUid: actorUid,
       studentName: (studentName || '').toString().trim(),
-      student_name: (studentName || '').toString().trim(), // snake_case compatibility
+      student_name: (studentName || '').toString().trim(),
       submittedAt: nowIso,
       answers,
-      responses: answers, // snake_case compatibility
+      responses: answers,
       analysis: enrichedDiagnosis,
+      signedEnvelope,
       violations: finalViolations,
       reliabilityIndex: finalReliability,
       deliveryReceiptId,
@@ -2438,8 +2784,6 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
       deliveryChannel,
       syncState: 'synced',
       localUpdatedAt: nowIso,
-
-      // Multi-tenant fields containing both camelCase and snake_case variants to prevent data-loss and filtering mismatches
       teacher_id: (activeSession as any).teacherId || (activeSession as any).teacher_id || '',
       teacherId: (activeSession as any).teacherId || (activeSession as any).teacher_id || '',
       teacher_email: ((activeSession as any).teacherEmail || (activeSession as any).teacher_email || '').toString().trim().toLowerCase(),
@@ -2454,21 +2798,15 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
       classNumber: (activeSession as any).classNumber || (activeSession as any).class || ''
     };
 
-    console.log(`[Server:handlePostSubmission:${reqId}] Current database contains ${existingSubmissions.length} submissions. Inserting new submission...`);
     existingSubmissions.push(newSubmission);
-    
-    console.log(`[Server:handlePostSubmission:${reqId}] Persisting submissions asynchronously (with atomic temp write + rename lock)...`);
     await saveSubmissions(existingSubmissions);
-    console.log(`[Server:handlePostSubmission:${reqId}] Submissions successfully saved!`);
 
-    // Broadcast live SSE push directly to Teacher Dashboard
     broadcastRealtimeEvent(newSubmission.teacherEmail, 'submission:created', {
       submission: newSubmission,
       deliveryReceiptId,
       deliveredAt: nowIso
     });
 
-    // Evaluate Smart Pedagogical Notifications asynchronously (non-blocking)
     const sessionSubs = existingSubmissions.filter(
       (s: any) =>
         String(s.sessionId || s.session_id || '').toUpperCase().trim() === targetSessionId
@@ -2487,6 +2825,10 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
     res.json({
       success: true,
       submission: newSubmission,
+      signedEnvelope,
+      signatureIntegrity: 'valid',
+      analysisOrigin,
+      contentTruthNote: CONTENT_TRUTH_DISCLAIMER,
       deliveryReceipt: {
         receiptId: deliveryReceiptId,
         deliveredAt: nowIso,
@@ -2497,27 +2839,21 @@ const handlePostSubmission = async (req: express.Request, res: express.Response)
       }
     });
   } catch (err: any) {
-    console.error(`[Server:handlePostSubmission:${reqId}] CRITICAL COMPLIANCE SUBMISSION ERROR EXCEPTION:`, err);
-    res.status(500).json({ 
-      error: 'عذراً، حدث خطأ أثناء معالجة استمارة التشخيص.', 
+    console.error(`[Server:handlePostSubmission:${reqId}] SUBMISSION ERROR:`, err);
+    res.status(500).json({
+      error: 'عذراً، حدث خطأ أثناء معالجة استمارة التشخيص.',
       details: err?.message || String(err),
-      stack: err?.stack
     });
   }
 };
 
-app.post('/api/submissions', handlePostSubmission);
-app.post('/api/student-submit', handlePostSubmission);
+app.post('/api/submissions', requireStudentOrTeacherSubmissionAuth, aiRateLimiter, handlePostSubmission);
+app.post('/api/student-submit', requireStudentOrTeacherSubmissionAuth, aiRateLimiter, handlePostSubmission);
 
-// Real-time SSE stream for instant student-to-teacher delivery
-app.get('/api/realtime/teacher-stream', (req, res) => {
-  const email = String(req.query.email || '').trim().toLowerCase();
-  const role = String(req.query.role || 'teacher').trim().toLowerCase();
-  const isAdmin = (role === 'admin' || email === 'phillofikr@gmail.com') && isAdminAuthorized(req);
-
-  if (!email && !isAdmin) {
-    return res.status(400).json({ error: 'البريد الإلكتروني مطلوب لفتح قناة البث اللحظي.' });
-  }
+// Real-time SSE stream for instant student-to-teacher delivery (Authenticated Teacher or Admin)
+app.get('/api/realtime/teacher-stream', requireTeacherOrAdminAuth, (req: any, res) => {
+  const actor = req.authActor;
+  const isAdmin = actor.role === 'admin';
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2527,7 +2863,7 @@ app.get('/api/realtime/teacher-stream', (req, res) => {
     (res as any).flushHeaders();
   }
 
-  const streamKey = isAdmin ? '__admin__' : email;
+  const streamKey = isAdmin ? '__admin__' : actor.email;
   registerSseClient(streamKey, res);
 
   sendSsePacket(res, 'connected', {
@@ -2550,23 +2886,18 @@ app.get('/api/realtime/teacher-stream', (req, res) => {
   });
 });
 
-// Bidirectional manual sync & reconciliation endpoint (IndexedDB <-> Server JSON <-> Offline Queue)
-app.post('/api/sync/reconcile', async (req, res) => {
+// Bidirectional manual sync & reconciliation endpoint (Authenticated Teacher/Admin only)
+app.post('/api/sync/reconcile', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const {
-      email,
-      role,
       localSubmissions = [],
       localSessions = [],
       localForms = [],
       offlineQueue = []
     } = req.body || {};
-    const trimmedEmail = String(email || '').trim().toLowerCase();
-    const isAdmin = (role === 'admin' || trimmedEmail === 'phillofikr@gmail.com') && isAdminAuthorized(req);
-
-    if (!trimmedEmail && !isAdmin) {
-      return res.status(400).json({ error: 'البريد الإلكتروني مطلوب لمزامنة البيانات.' });
-    }
+    const trimmedEmail = actor.email.toLowerCase().trim();
+    const isAdmin = actor.role === 'admin';
 
     const sessions = await loadSessions();
     let sessionsMutated = false;
@@ -2744,10 +3075,10 @@ app.post('/api/sync/reconcile', async (req, res) => {
   }
 });
 
-// AI Form Generator endpoint
-app.post('/api/forms/generate-ai', async (req, res) => {
+// AI Form Generator endpoint (Authenticated + Rate-limited + PII-redacted + Free model locked)
+app.post('/api/forms/generate-ai', requireTeacherOrAdminAuth, aiRateLimiter, async (req: any, res) => {
   try {
-    const { topic, level, stream, aim, questionCount } = req.body;
+    const { topic, level, stream, aim, questionCount } = req.body || {};
     if (!topic || !level || !stream || !aim) {
       return res.status(400).json({ error: 'جميع معطيات التوليد مطلوبة لتوليد الاستبانة بذكاء.' });
     }
@@ -2757,13 +3088,15 @@ app.post('/api/forms/generate-ai', async (req, res) => {
       return res.status(503).json({ error: 'مفتاح واجهة Gemini API غير متوفر على الخادم لتوليد الاستمارة بالذكاء الاصطناعي.' });
     }
 
+    const safeTopic = redactStudentPiiFromText(String(topic));
+    const safeAim = redactStudentPiiFromText(String(aim));
     const countTarget = Math.max(4, Math.min(8, Number(questionCount) || 5));
     const prompt = `أنت خبير تربوي ومفتش ممتاز متخصص في ديدكتيك الفلسفة بالثانوي التأهيلي وصناعة الاستمارات المنهجية لتتبع تمثلات التلاميذ.
 قم بتوليد استمارة تشخيصية متكاملة واحترافية تتبع المعطيات التالية:
-- موضوع الدرس: "${topic}"
-- المستوى الدراسي: "${level}"
-- الشعبة والمسلك: "${stream}"
-- الغاية والهدف البيداغوجي من التشخيص: "${aim}"
+- موضوع الدرس: "${safeTopic}"
+- المستوى الدراسي: "${String(level)}"
+- الشعبة والمسلك: "${String(stream)}"
+- الغاية والهدف البيداغوجي من التشخيص: "${safeAim}"
 
 المطلوب منك:
 توليد ${countTarget} أسئلة بيداغوجية باللغة العربية البليغة تتنوع أنماطها لمساءلة تمثلات التلميذ:
@@ -2775,7 +3108,7 @@ app.post('/api/forms/generate-ai', async (req, res) => {
 تأكد من صياغة الاستجابة بصيغة JSON دقيقة ومطابقة للهيكل التالي تماماً بدون أي علامات markdown إضافية.`;
 
     const response = await generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
+      model: PRIMARY_FREE_GEMINI_MODEL,
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
@@ -2827,10 +3160,10 @@ app.post('/api/forms/generate-ai', async (req, res) => {
   }
 });
 
-// Per-question AI refinement endpoint
-app.post('/api/forms/refine-question', async (req, res) => {
+// Per-question AI refinement endpoint (Authenticated + Rate-limited + PII-redacted)
+app.post('/api/forms/refine-question', requireTeacherOrAdminAuth, aiRateLimiter, async (req: any, res) => {
   try {
-    const { question, topic, level, stream, mode } = req.body;
+    const { question, topic, level, stream, mode } = req.body || {};
     if (!question || !question.label || typeof question.label !== 'string') {
       return res.status(400).json({ error: 'بيانات السؤال غير مكتملة للتحسين.' });
     }
@@ -2840,6 +3173,8 @@ app.post('/api/forms/refine-question', async (req, res) => {
       return res.status(503).json({ error: 'مفتاح واجهة Gemini API غير متوفر على الخادم حالياً.' });
     }
 
+    const safeLabel = redactStudentPiiFromText(question.label);
+    const safeTopic = redactStudentPiiFromText(String(topic || 'الفلسفة والتفكير النقدي'));
     const modeInstruction =
       mode === 'critical'
         ? 'ارفع من عمق المساءلة الفلسفية والشك المنهجي في صياغة السؤال.'
@@ -2849,10 +3184,10 @@ app.post('/api/forms/refine-question', async (req, res) => {
 
     const prompt = `أنت مفتش ومكوّن بيداغوجي في ديدكتيك الفلسفة بالتعليم الثانوي التأهيلي.
 راجع السؤال التالي وحسّنه:
-- نص السؤال الحالي: "${question.label}"
+- نص السؤال الحالي: "${safeLabel}"
 - نوع السؤال: "${question.type || 'long'}"
 - الخيارات الحالية: ${JSON.stringify(question.options || [])}
-- موضوع الدرس: "${topic || 'الفلسفة والتفكير النقدي'}"
+- موضوع الدرس: "${safeTopic}"
 - المستوى الدراسي: "${level || 'ثانية باك'}"
 - الشعبة: "${stream || 'عام'}"
 - هدف التحسين: ${modeInstruction}
@@ -2865,7 +3200,7 @@ app.post('/api/forms/refine-question', async (req, res) => {
 5. اقترح الوزن المناسب (weight من 1 إلى 5) وتعليلاً مقتضباً للتحسين (rationale).`;
 
     const response = await generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
+      model: PRIMARY_FREE_GEMINI_MODEL,
       contents: prompt,
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
@@ -2904,43 +3239,32 @@ app.post('/api/forms/refine-question', async (req, res) => {
   }
 });
 
-// Endpoint to retrieve student submissions (matching RBAC)
-app.get('/api/submissions', async (req, res) => {
+// Endpoint to retrieve student submissions (Strictly derived from verified authActor)
+app.get('/api/submissions', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
-    const { email, role, sessionId } = req.query;
+    const actor = req.authActor;
+    const { sessionId } = req.query;
     const submissions = await loadSubmissions();
 
     let filtered = submissions;
 
-    // Filter by specific session if provided with dual-casing safety
     if (sessionId) {
       const targetSessionId = (sessionId as string).toUpperCase().trim();
-      filtered = filtered.filter(s => {
+      filtered = filtered.filter((s) => {
         const sid = s.session_id || s.sessionId;
         return sid && sid.toUpperCase().trim() === targetSessionId;
       });
     }
 
-    const trimmedEmail = email ? (email as string).trim().toLowerCase() : '';
-
-    const isAdmin = (role === 'admin' || trimmedEmail === 'phillofikr@gmail.com') && isAdminAuthorized(req);
-
-    if (isAdmin) {
-      // Admin sees ALL submissions
-      return res.json({ submissions: filtered.sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()) });
+    if (actor.role !== 'admin') {
+      filtered = filtered.filter((s) => isActorOwnerOfRecord(actor, s));
     }
 
-    if (!email) {
-      return res.status(400).json({ error: 'البريد الإلكتروني للأستاذ مطلوب لتصفية نتائج التلاميذ.' });
-    }
-
-    // Teacher only sees submissions associated with their account (dual-casing matches)
-    filtered = filtered.filter(s => {
-      const subEmail = s.teacher_email || s.teacherEmail;
-      return subEmail && subEmail.trim().toLowerCase() === trimmedEmail;
+    res.json({
+      submissions: filtered.sort(
+        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      ),
     });
-    
-    res.json({ submissions: filtered.sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()) });
   } catch (err) {
     console.error('Error fetching submissions GET:', err);
     res.status(500).json({ error: 'فشل استرجاع بيانات التلاميذ.' });
@@ -3005,30 +3329,53 @@ function calculateFiveAxesScoresServer(answers: any) {
   return [axis1, axis2, axis3, axis4, axis5];
 }
 
-// On-demand Gemini advanced pedagogical analysis route
-app.post('/api/submissions/:id/analyze-gemini', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { email, role } = req.body;
+// On-demand Gemini advanced pedagogical analysis route (Option A: returns signed HTTPS envelope ONLY, no Firestore write)
+app.post(
+  '/api/submissions/:id/analyze-gemini',
+  requireTeacherOrAdminAuth,
+  aiRateLimiter,
+  async (req: any, res) => {
+    try {
+      const actor = req.authActor;
+      const { id } = req.params;
 
-    const submissions = await loadSubmissions();
-    const index = submissions.findIndex(s => s.id === id);
+      const submissions = await loadSubmissions();
+      const index = submissions.findIndex((s) => s.id === id);
+      const providedSubmission = req.body?.submission;
 
-    if (index === -1) {
-      return res.status(404).json({ error: 'ملف التلميذ غير موجود.' });
-    }
+      if (index === -1 && (!providedSubmission || typeof providedSubmission !== 'object')) {
+        return res.status(404).json({ error: 'ملف التلميذ غير موجود.' });
+      }
 
-    const submission = submissions[index];
-    const answers: any = submission.answers || {};
+      const submission: StudentSubmission =
+        index !== -1
+          ? submissions[index]
+          : {
+              ...(providedSubmission as StudentSubmission),
+              id: providedSubmission.id || id,
+            };
 
-    const [a1, a2, a3, a4, a5] = calculateFiveAxesScoresServer(answers);
+      if (!isActorOwnerOfRecord(actor, submission)) {
+        return res.status(403).json({ error: 'غير مصرح بتحليل ملف تلميذ يعود لأستاذ آخر.' });
+      }
 
-    const client = getGeminiClient();
-    if (!client) {
-      return res.status(400).json({ error: 'عذراً، محرك الذكاء الاصطناعي (Gemini API Key) غير مهيأ حالياً بالخادم. يرجى مراجعة إعدادات الأسرار.' });
-    }
+      const rawAnswers: any = submission.answers || {};
+      const redactedAnswers = redactStudentAnswersForAI(rawAnswers, {
+        studentName: submission.studentName || submission.student_name,
+        institution: submission.institution,
+      });
 
-    const prompt = `أنت خبير تربوي ومفتش ممتاز متخصص في ديدكتيك درس الفلسفة وتفكيك تمثلات وتصورات المتعلمين في الوسط التعليمي.
+      const [a1, a2, a3, a4, a5] = calculateFiveAxesScoresServer(rawAnswers);
+
+      const client = getGeminiClient();
+      if (!client) {
+        return res.status(400).json({
+          error:
+            'عذراً، محرك الذكاء الاصطناعي (Gemini API Key) غير مهيأ حالياً بالخادم. يرجى مراجعة إعدادات الأسرار.',
+        });
+      }
+
+      const prompt = `أنت خبير تربوي ومفتش ممتاز متخصص في ديدكتيك درس الفلسفة وتفكيك تمثلات وتصورات المتعلمين في الوسط التعليمي.
 مهمتك الأساسية هي إجراء تحليل بيداغوجي متقدم لتشخيص إجابات هذا التلميذ المفتوحة ومقابلتها بدرجات المقاييس الخمسة التالية:
 
 الدرجات المسجلة للتلميذ في المقاييس الخمسة (من 0 إلى 100):
@@ -3039,14 +3386,14 @@ app.post('/api/submissions/:id/analyze-gemini', async (req, res) => {
 5. مقياس الاستعداد الحجاجي والتفاعل: ${a5}%
 
 إجابات التلميذ المفتوحة والوجدانية المسجلة في فِيلوسكان:
-- معنى الفلسفة بالنسبة للتلميذ: "${answers.philosophyMeaning || ''}"
-- مصدر تشكل فكرته المسبقة: "${answers.sourceOfIdea || ''}"
-- شعوره عند سماع كلمة الفلسفة: "${answers.feelingWhenHearing || ''}"
-- تعليله وتبريره لهذا الشعور: "${answers.feelingJustification || ''}"
-- تفاعله مع سؤال الحرية الإشكالي: "${answers.reactionToFreedomQuestion || ''}"
-- الغاية والهدف الأساسي للفلسفة: "${answers.philosophyPrimaryGoal || ''}"
-- ردة فعله في حوار بدون إجابة واحدة: "${answers.debateReaction || ''}"
-- توقعه لنجاحه وعلاقته بالفلسفة: "${answers.expectSuccess || ''}"
+- معنى الفلسفة بالنسبة للتلميذ: "${redactedAnswers.philosophyMeaning || ''}"
+- مصدر تشكل فكرته المسبقة: "${redactedAnswers.sourceOfIdea || ''}"
+- شعوره عند سماع كلمة الفلسفة: "${redactedAnswers.feelingWhenHearing || ''}"
+- تعليله وتبريره لهذا الشعور: "${redactedAnswers.feelingJustification || ''}"
+- تفاعله مع سؤال الحرية الإشكالي: "${redactedAnswers.reactionToFreedomQuestion || ''}"
+- الغاية والهدف الأساسي للفلسفة: "${redactedAnswers.philosophyPrimaryGoal || ''}"
+- ردة فعله في حوار بدون إجابة واحدة: "${redactedAnswers.debateReaction || ''}"
+- توقعه لنجاحه وعلاقته بالفلسفة: "${redactedAnswers.expectSuccess || ''}"
 
 مطلوب منك بدقة بالغة:
 1. مراجعة هذه المعطيات وصياغة تفسير بيداغوجي عميق (باللغة العربية الفصحى البليغة والميسرة) يوضح طبيعة تمثلات التلميذ وتصوره للفلسفة ومكامن الصعوبة أو التميز لديه بناءً على تلك المقاييس الخمسة وإجاباته المفتوحة (في حدود 3 أسطر واضحة ومفيدة للأستاذ).
@@ -3064,111 +3411,205 @@ app.post('/api/submissions/:id/analyze-gemini', async (req, res) => {
   ]
 }`;
 
-    const response = await generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            classification: { type: Type.STRING, description: 'Must be exactly: خوف معرفي, فضول معرفي, تفكير سطحي, or تفكير نقدي' },
-            explanation: { type: Type.STRING, description: 'pedagogical explanation matching guidelines' },
-            pedagogicalRecommendationsList: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'Exactly 3 custom pedagogical recommendations for this student'
-            }
+      const response = await generateContentWithRetry(client, {
+        model: PRIMARY_FREE_GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              classification: {
+                type: Type.STRING,
+                description: 'Must be exactly: خوف معرفي, فضول معرفي, تفكير سطحي, or تفكير نقدي',
+              },
+              explanation: { type: Type.STRING, description: 'pedagogical explanation matching guidelines' },
+              pedagogicalRecommendationsList: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Exactly 3 custom pedagogical recommendations for this student',
+              },
+            },
+            required: ['classification', 'explanation', 'pedagogicalRecommendationsList'],
           },
-          required: ['classification', 'explanation', 'pedagogicalRecommendationsList']
-        }
+        },
+      });
+
+      const parsed = JSON.parse(response.text.trim());
+
+      if (!submission.analysis) {
+        submission.analysis = {} as any;
       }
+
+      if (parsed.classification) {
+        submission.analysis.classification = parsed.classification;
+      }
+      if (parsed.explanation) {
+        submission.analysis.explanation = parsed.explanation;
+      }
+      if (parsed.pedagogicalRecommendationsList && Array.isArray(parsed.pedagogicalRecommendationsList)) {
+        submission.analysis.pedagogicalRecommendationsList = parsed.pedagogicalRecommendationsList;
+        submission.analysis.pedagogicalRecommendation = parsed.pedagogicalRecommendationsList.join('\n\n');
+      }
+
+      const finalCls = (submission.analysis.classification || 'تفكير نقدي') as ThinkingStyle;
+      const baseMetrics = submission.analysis.metrics || {
+        cognitiveFear: 20,
+        cognitiveCuriosity: 50,
+        shallowThinking: 25,
+        criticalThinking: 60,
+      };
+      const deep = buildDeepDiagnosticEnrichment(
+        rawAnswers,
+        baseMetrics,
+        finalCls,
+        typeof submission.reliabilityIndex === 'number' ? submission.reliabilityIndex : 100,
+        submission.violations || []
+      );
+      submission.analysis = {
+        ...submission.analysis,
+        ...deep,
+        analysisSource: 'gemini',
+        pedagogicalRecommendationsList:
+          submission.analysis.pedagogicalRecommendationsList ||
+          deep.remedialPlan.map((step) => `${step.phase}: ${step.action}`),
+      };
+      submission.localUpdatedAt = new Date().toISOString();
+
+      const resolvedSessionId = String(submission.sessionId || submission.session_id || '').toUpperCase().trim();
+      const resolvedStudentUid = String(submission.studentAuthUid || actor.uid);
+      const signedEnvelope = signAnalysisEnvelope({
+        submissionId: submission.id,
+        sessionId: resolvedSessionId,
+        studentAuthUid: resolvedStudentUid,
+        answers: rawAnswers,
+        analysis: submission.analysis,
+        analysisOrigin: 'gemini',
+      });
+      submission.signedEnvelope = signedEnvelope;
+
+      if (index !== -1) {
+        submissions[index] = submission;
+        await saveSubmissions(submissions);
+        broadcastRealtimeEvent(submission.teacherEmail || submission.teacher_email, 'submission:updated', {
+          submission,
+        });
+      }
+
+      // Option A: return signed analysis in HTTPS response ONLY; never write trustedAnalysis/analysisStatus to Firestore
+      res.json({
+        success: true,
+        submission,
+        analysis: submission.analysis,
+        signedEnvelope,
+        signatureIntegrity: 'valid',
+        analysisOrigin: 'gemini',
+        contentTruthNote: CONTENT_TRUTH_DISCLAIMER,
+      });
+    } catch (err: any) {
+      console.error('Error in POST /api/submissions/:id/analyze-gemini:', err);
+      const mapped = mapGeminiErrorResponse(
+        err,
+        'حدث خطأ أثناء الاتصال بخدمة Gemini وتحليل إجابات التلميذ.'
+      );
+      res.status(mapped.httpStatus).json({ error: mapped.error, details: err?.message });
+    }
+  }
+);
+
+// Option A HMAC + hash integrity verification endpoint (HTTPS response only)
+app.post('/api/submissions/:id/verify-analysis', requireTeacherOrAdminAuth, async (req: any, res) => {
+  try {
+    const actor = req.authActor;
+    const { id } = req.params;
+    const {
+      envelope,
+      submissionId,
+      sessionId,
+      studentAuthUid,
+      answers,
+      analysis,
+      requireDeterministicSubmissionId,
+      consumeReplayNonce,
+      submission: bodySubmission,
+    } = req.body || {};
+
+    let storedRecord: StudentSubmission | undefined;
+    const submissions = await loadSubmissions();
+    storedRecord = submissions.find((s) => s.id === id);
+    if (storedRecord && !isActorOwnerOfRecord(actor, storedRecord)) {
+      return res.status(403).json({ error: 'غير مصرح بالتحقق من ملف يعود لأستاذ آخر.' });
+    }
+    if (!storedRecord && bodySubmission && typeof bodySubmission === 'object') {
+      if (!isActorOwnerOfRecord(actor, bodySubmission)) {
+        return res.status(403).json({ error: 'غير مصرح بالتحقق من ملف يعود لأستاذ آخر.' });
+      }
+      storedRecord = bodySubmission as StudentSubmission;
+    }
+
+    const resolvedEnvelope = envelope || storedRecord?.signedEnvelope;
+    const resolvedSubmissionId = String(submissionId || storedRecord?.id || id);
+    const resolvedSessionId = String(
+      sessionId || storedRecord?.sessionId || storedRecord?.session_id || resolvedEnvelope?.sessionId || ''
+    );
+    const resolvedStudentAuthUid = String(
+      studentAuthUid || storedRecord?.studentAuthUid || resolvedEnvelope?.studentAuthUid || ''
+    );
+    const resolvedAnswers = answers !== undefined ? answers : storedRecord?.answers;
+    const resolvedAnalysis = analysis !== undefined ? analysis : storedRecord?.analysis;
+
+    const verification = verifyAnalysisEnvelope({
+      envelope: resolvedEnvelope,
+      submissionId: resolvedSubmissionId,
+      sessionId: resolvedSessionId,
+      studentAuthUid: resolvedStudentAuthUid,
+      answers: resolvedAnswers,
+      analysis: resolvedAnalysis,
+      requireDeterministicSubmissionId,
+      consumeReplayNonce,
     });
 
-    const parsed = JSON.parse(response.text.trim());
+    const httpStatus = verification.valid
+      ? 200
+      : verification.signatureIntegrity === 'replayed'
+      ? 409
+      : 422;
 
-    // Merge/Update the student submission's analysis object
-    if (!submission.analysis) {
-      submission.analysis = {} as any;
-    }
-
-    if (parsed.classification) {
-      submission.analysis.classification = parsed.classification;
-    }
-    if (parsed.explanation) {
-      submission.analysis.explanation = parsed.explanation;
-    }
-    if (parsed.pedagogicalRecommendationsList && Array.isArray(parsed.pedagogicalRecommendationsList)) {
-      submission.analysis.pedagogicalRecommendationsList = parsed.pedagogicalRecommendationsList;
-      submission.analysis.pedagogicalRecommendation = parsed.pedagogicalRecommendationsList.join('\n\n');
-    }
-
-    const finalCls = (submission.analysis.classification || 'تفكير نقدي') as ThinkingStyle;
-    const baseMetrics = submission.analysis.metrics || {
-      cognitiveFear: 20,
-      cognitiveCuriosity: 50,
-      shallowThinking: 25,
-      criticalThinking: 60
-    };
-    const deep = buildDeepDiagnosticEnrichment(
-      answers,
-      baseMetrics,
-      finalCls,
-      typeof submission.reliabilityIndex === 'number' ? submission.reliabilityIndex : 100,
-      submission.violations || []
-    );
-    submission.analysis = {
-      ...submission.analysis,
-      ...deep,
-      analysisSource: 'gemini',
-      pedagogicalRecommendationsList:
-        submission.analysis.pedagogicalRecommendationsList ||
-        deep.remedialPlan.map((step) => `${step.phase}: ${step.action}`)
-    };
-    submission.localUpdatedAt = new Date().toISOString();
-
-    submissions[index] = submission;
-    await saveSubmissions(submissions);
-    broadcastRealtimeEvent(submission.teacherEmail || submission.teacher_email, 'submission:updated', { submission });
-
-    res.json({ success: true, submission });
-  } catch (err: any) {
-    console.error('Error in POST /api/submissions/:id/analyze-gemini:', err);
-    const mapped = mapGeminiErrorResponse(
-      err,
-      'حدث خطأ أثناء الاتصال بخدمة Gemini وتحليل إجابات التلميذ.'
-    );
-    res.status(mapped.httpStatus).json({ error: mapped.error, details: err?.message });
+    return res.status(httpStatus).json(verification);
+  } catch (err) {
+    console.error('Error in POST /api/submissions/:id/verify-analysis:', err);
+    return res.status(500).json({ error: 'فشل التحقق التشفيري من غلاف التحليل.' });
   }
 });
 
-// Endpoint for Teacher limited editing (تعديل محدود)
-app.put('/api/submissions/:id', async (req, res) => {
+// Endpoint for Teacher limited editing (تعديل محدود - Owner or Admin)
+app.put('/api/submissions/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
-    const { teacherNotes, overriddenClassification, role, email } = req.body;
+    const { teacherNotes, overriddenClassification } = req.body || {};
 
     const submissions = await loadSubmissions();
-    const index = submissions.findIndex(s => s.id === id);
+    const index = submissions.findIndex((s) => s.id === id);
 
     if (index === -1) {
       return res.status(404).json({ error: 'ملف التلميذ غير موجود.' });
     }
 
-    const isAdmin = (role === 'admin' || (email && (email as string).toLowerCase().trim() === 'phillofikr@gmail.com')) && isAdminAuthorized(req);
-
-    const subEmail = (submissions[index].teacher_email || submissions[index].teacherEmail || '').toLowerCase().trim();
-    if (!isAdmin && email && subEmail && subEmail !== email.toLowerCase().trim()) {
+    if (!isActorOwnerOfRecord(actor, submissions[index])) {
       return res.status(403).json({ error: 'غير مسموح لك بتعديل بيانات تلاميذ يعودون لأستاذ آخر.' });
     }
 
-    // Apply specific corrections
     if (teacherNotes !== undefined) {
       submissions[index].teacherNotes = teacherNotes;
     }
     if (overriddenClassification !== undefined) {
-      if (overriddenClassification === null || overriddenClassification === 'unselected' || overriddenClassification === '') {
+      if (
+        overriddenClassification === null ||
+        overriddenClassification === 'unselected' ||
+        overriddenClassification === ''
+      ) {
         delete submissions[index].overriddenClassification;
       } else {
         submissions[index].overriddenClassification = overriddenClassification;
@@ -3179,7 +3620,7 @@ app.put('/api/submissions/:id', async (req, res) => {
 
     await saveSubmissions(submissions);
     broadcastRealtimeEvent(submissions[index].teacherEmail || submissions[index].teacher_email, 'submission:updated', {
-      submission: submissions[index]
+      submission: submissions[index],
     });
     res.json({ success: true, submission: submissions[index] });
   } catch (err) {
@@ -3188,28 +3629,25 @@ app.put('/api/submissions/:id', async (req, res) => {
   }
 });
 
-// Endpoint to delete student submissions (Teacher space management)
-app.delete('/api/submissions/:id', async (req, res) => {
+// Endpoint to delete student submissions (Owner or Admin)
+app.delete('/api/submissions/:id', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
+    const actor = req.authActor;
     const { id } = req.params;
-    const { role, email } = req.query;
-    
+
     const submissions = await loadSubmissions();
-    const index = submissions.findIndex(s => s.id === id);
+    const index = submissions.findIndex((s) => s.id === id);
 
     if (index === -1) {
       return res.status(404).json({ error: 'الملف المراد حذفه غير موجود.' });
     }
 
-    const isAdmin = (role === 'admin' || (email && (email as string).toLowerCase().trim() === 'phillofikr@gmail.com')) && isAdminAuthorized(req);
-
-    const subEmail = (submissions[index].teacher_email || submissions[index].teacherEmail || '').toLowerCase().trim();
-    if (!isAdmin && email && subEmail && subEmail !== (email as string).toLowerCase().trim()) {
+    if (!isActorOwnerOfRecord(actor, submissions[index])) {
       return res.status(403).json({ error: 'غير مسموح لك بحذف بيانات تلاميذ يعودون لأستاذ آخر.' });
     }
 
     const targetTeacherEmail = submissions[index].teacherEmail || submissions[index].teacher_email;
-    const filtered = submissions.filter(s => s.id !== id);
+    const filtered = submissions.filter((s) => s.id !== id);
     await saveSubmissions(filtered);
     broadcastRealtimeEvent(targetTeacherEmail, 'submission:deleted', { submissionId: id });
     res.json({ success: true });
@@ -3219,21 +3657,23 @@ app.delete('/api/submissions/:id', async (req, res) => {
   }
 });
 
-// Endpoint for AI chat assistant for teachers
-app.post('/api/ai/teacher-chat', async (req, res) => {
+// Endpoint for AI chat assistant for teachers (Authenticated + Rate-limited + PII-redacted)
+app.post('/api/ai/teacher-chat', requireTeacherOrAdminAuth, aiRateLimiter, async (req: any, res) => {
   try {
-    const { messages, sessionInfo } = req.body;
-    
+    const { messages, sessionInfo } = req.body || {};
+
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'حقل المحادثة مطلوب' });
     }
 
     const client = getGeminiClient();
     if (!client) {
-      return res.status(400).json({ error: 'عذراً، محرك الذكاء الاصطناعي (Gemini API Key) غير مهيأ حالياً بالخادم. يرجى مراجعة إعدادات الأسرار.' });
+      return res.status(400).json({
+        error:
+          'عذراً، محرك الذكاء الاصطناعي (Gemini API Key) غير مهيأ حالياً بالخادم. يرجى مراجعة إعدادات الأسرار.',
+      });
     }
 
-    // Build the system instruction guiding the educational expert
     let systemInstruction = `أنت بصفة خبير تربوي ومرشد ديدكتيكي ومفتش ممتاز متخصص في ديدكتيك مادة الفلسفة بالمنظومة التعليمية المغربية.
 مهمتك مساعدة الأساتذة في قراءة وتفسير نتائج التشخيص الفلسفية لأقسامهم بشكل دقيق، وتوفير نصائح وتطبيقات بيداغوجية، مع اقتراح سيناريوهات ملموسة للتدخل العلاجي وتفريق التدريس.
 قدّم دائماً عيادة متخصصة، إجابات واضحة ومكثفة باللغة العربية الفصحى وبصيغة مهنية بيداغوجية راقية ملؤها التشجيع والدعم العملي.
@@ -3241,7 +3681,7 @@ app.post('/api/ai/teacher-chat', async (req, res) => {
 
     if (sessionInfo) {
       systemInstruction += `\n\nإليك معطيات القسم الحالي المشخص لتوجيه استشارتك بدقة قصوى:
-- عنوان الجلسة التشخيصية: ${sessionInfo.title || 'غير محدد'}
+- عنوان الجلسة التشخيصية: ${redactStudentPiiFromText(String(sessionInfo.title || 'غير محدد'))}
 - المستوى الدراسي للقسم: ${sessionInfo.level || 'غير محدد'}
 - الشعبة/المسلك: ${sessionInfo.stream || 'غير محدد'}
 - عدد التلاميذ الذين أكملوا التشخيص: ${sessionInfo.totalStudents || 0} تلميذ(ة)
@@ -3257,31 +3697,25 @@ app.post('/api/ai/teacher-chat', async (req, res) => {
   * نمط الخوف المعرفي: ${sessionInfo.distribution?.cognitiveFear || 0} تلميذ`;
     }
 
-    // Convert messages to Gemini SDK roles (user, model)
-    const contents = messages.map((m: any) => {
-      return {
-        role: m.sender === 'user' ? 'user' : 'model',
-        parts: [{ text: m.text }]
-      };
-    });
+    const contents = messages.map((m: any) => ({
+      role: m.sender === 'user' ? 'user' : 'model',
+      parts: [{ text: redactStudentPiiFromText(String(m.text || '')) }],
+    }));
 
     const response = await generateContentWithRetry(client, {
-      model: 'gemini-4-hydrogen',
-      contents: contents,
+      model: PRIMARY_FREE_GEMINI_MODEL,
+      contents,
       config: {
-        systemInstruction: systemInstruction,
+        systemInstruction,
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-      }
+      },
     });
 
     const replyText = response.text || '';
     return res.json({ response: replyText });
   } catch (error: any) {
     console.error('Error in POST /api/ai/teacher-chat:', error);
-    const mapped = mapGeminiErrorResponse(
-      error,
-      'عذراً، حدث خطأ أثناء معالجة المحادثة الموجهة.'
-    );
+    const mapped = mapGeminiErrorResponse(error, 'عذراً، حدث خطأ أثناء معالجة المحادثة الموجهة.');
     return res.status(mapped.httpStatus).json({ error: mapped.error, details: error?.message });
   }
 });
@@ -3333,7 +3767,7 @@ app.delete('/api/admin/teachers/:id', requireAdminAuth, async (req, res) => {
 app.put('/api/admin/teachers/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, school, regionalAcademy, province, email } = req.body;
+    const { fullName, school, regionalAcademy, province, email, isDisabled } = req.body;
 
     const teachers = await loadTeachers();
     const idx = teachers.findIndex(t => t.id === id);
@@ -3346,6 +3780,7 @@ app.put('/api/admin/teachers/:id', requireAdminAuth, async (req, res) => {
     if (regionalAcademy !== undefined) teachers[idx].regionalAcademy = regionalAcademy.trim();
     if (province !== undefined) teachers[idx].province = province.trim();
     if (email !== undefined) teachers[idx].email = email.toLowerCase().trim();
+    if (typeof isDisabled === 'boolean') teachers[idx].isDisabled = isDisabled;
 
     await saveTeachers(teachers);
     res.json({ success: true, teacher: teachers[idx] });
@@ -3354,37 +3789,43 @@ app.put('/api/admin/teachers/:id', requireAdminAuth, async (req, res) => {
   }
 });
 
-// Teacher edits their own profile
-app.put('/api/teacher/profile', async (req, res) => {
+// Teacher edits their own profile (Authenticated self or Admin only)
+app.put('/api/teacher/profile', requireTeacherOrAdminAuth, async (req: any, res) => {
   try {
-    const { email, fullName, school, regionalAcademy, province, specialty, avatar, yearsOfExperience } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'البريد الإلكتروني مطلوب لتحديث البيانات.' });
+    const actor = req.authActor;
+    const { email, fullName, school, regionalAcademy, province, specialty, avatar, yearsOfExperience } =
+      req.body || {};
+    const targetEmail = String(email || actor.email).toLowerCase().trim();
+    if (actor.role !== 'admin' && targetEmail !== actor.email) {
+      return res.status(403).json({ error: 'غير مصرح بتعديل ملف أستاذ آخر.' });
     }
-    const lowerEmail = email.toLowerCase().trim();
+
     const teachers = await loadTeachers();
-    const idx = teachers.findIndex(t => t.email.toLowerCase() === lowerEmail);
+    const idx = teachers.findIndex(
+      (t) => t.uid === actor.uid || t.email.toLowerCase() === targetEmail
+    );
     if (idx === -1) {
       return res.status(404).json({ error: 'لم يتم العثور على حساب الأستاذ.' });
     }
 
     if (fullName !== undefined) {
-      if (!fullName.trim()) return res.status(400).json({ error: 'الاسم الكامل مطلوب.' });
-      teachers[idx].fullName = fullName.trim();
+      if (!String(fullName).trim()) return res.status(400).json({ error: 'الاسم الكامل مطلوب.' });
+      teachers[idx].fullName = String(fullName).trim();
     }
     if (school !== undefined) {
-      if (!school.trim()) return res.status(400).json({ error: 'اسم المؤسسة مطلوب.' });
-      teachers[idx].school = school.trim();
+      if (!String(school).trim()) return res.status(400).json({ error: 'اسم المؤسسة مطلوب.' });
+      teachers[idx].school = String(school).trim();
     }
     if (regionalAcademy !== undefined) {
-      if (!regionalAcademy.trim()) return res.status(400).json({ error: 'الأكاديمية الجهوية مطلوبة.' });
-      teachers[idx].regionalAcademy = regionalAcademy.trim();
+      if (!String(regionalAcademy).trim())
+        return res.status(400).json({ error: 'الأكاديمية الجهوية مطلوبة.' });
+      teachers[idx].regionalAcademy = String(regionalAcademy).trim();
     }
     if (province !== undefined) {
-      if (!province.trim()) return res.status(400).json({ error: 'إقليم التوجيه مطلوب.' });
-      teachers[idx].province = province.trim();
+      if (!String(province).trim()) return res.status(400).json({ error: 'إقليم التوجيه مطلوب.' });
+      teachers[idx].province = String(province).trim();
     }
-    if (specialty !== undefined) teachers[idx].specialty = specialty.trim();
+    if (specialty !== undefined) teachers[idx].specialty = String(specialty).trim();
     if (avatar !== undefined) teachers[idx].avatar = avatar;
     if (yearsOfExperience !== undefined) teachers[idx].yearsOfExperience = yearsOfExperience;
 
@@ -3401,7 +3842,7 @@ app.put('/api/teacher/profile', async (req, res) => {
       specialty: teachers[idx].specialty,
       avatar: teachers[idx].avatar,
       yearsOfExperience: teachers[idx].yearsOfExperience,
-      role: teachers[idx].email.toLowerCase().trim() === 'phillofikr@gmail.com' ? 'admin' : 'teacher'
+      role: teachers[idx].email.toLowerCase().trim() === 'phillofikr@gmail.com' ? 'admin' : 'teacher',
     });
   } catch (err) {
     res.status(500).json({ error: 'فشل تحديث معلومات الملف الشخصي.' });
@@ -3410,29 +3851,35 @@ app.put('/api/teacher/profile', async (req, res) => {
 
 // ==================== USER REPORTS ROUTING ====================
 
-// Submit a new User Report/Suggestion
-app.post('/api/reports', async (req, res) => {
+// Submit a new User Report/Suggestion (Authenticated active user + strict imageUrl validation)
+app.post('/api/reports', requireTeacherOrAdminAuth, publicReadRateLimiter, async (req: any, res) => {
   try {
-    const { senderName, email, reportType, title, description, imageUrl } = req.body;
-    if (!email || !reportType || !title || !description) {
-      return res.status(400).json({ error: 'البريد الإلكتروني، نوع البلاغ، العنوان والوصف حقول مطلوبة.' });
+    const actor = req.authActor;
+    const { senderName, email, reportType, title, description, imageUrl } = req.body || {};
+    if (!reportType || !title || !description) {
+      return res.status(400).json({ error: 'نوع البلاغ، العنوان والوصف حقول مطلوبة.' });
+    }
+    if (!isValidReportImageUrl(imageUrl)) {
+      return res.status(400).json({
+        error: 'رابط أو صورة المرفق غير صالحة (يُسمح فقط بـ https:// أو صورة Base64 أقل من 250KB).',
+      });
     }
 
     const reports = await loadReports();
-    // Sequential report ID starting at 1001 (All numbers MUST be standard/global numerals)
-    const reportSeq = reports.length + 1001; 
+    const reportSeq = reports.length + 1001;
     const reportId = `REP-${reportSeq}`;
 
     const newReport: UserReport = {
       id: reportId,
       timestamp: new Date().toISOString(),
-      senderName: senderName ? senderName.trim() : 'مستخدم مجهول',
-      email: email.toLowerCase().trim(),
+      reporterUid: actor.uid,
+      senderName: senderName ? String(senderName).trim() : actor.email,
+      email: actor.role === 'admin' && email ? String(email).toLowerCase().trim() : actor.email,
       reportType,
-      title: title.trim(),
-      description: description.trim(),
+      title: String(title).trim(),
+      description: String(description).trim(),
       imageUrl: imageUrl || '',
-      status: 'new'
+      status: 'new',
     };
 
     reports.push(newReport);
@@ -3448,7 +3895,6 @@ app.post('/api/reports', async (req, res) => {
 app.get('/api/reports', requireAdminAuth, async (req, res) => {
   try {
     const reports = await loadReports();
-    // Sort descending by timestamp
     const sorted = reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     res.json({ reports: sorted });
   } catch (err) {
@@ -3467,7 +3913,7 @@ app.put('/api/reports/:id', requireAdminAuth, async (req, res) => {
     }
 
     const reports = await loadReports();
-    const idx = reports.findIndex(r => r.id.toUpperCase() === id.toUpperCase());
+    const idx = reports.findIndex((r) => r.id.toUpperCase() === id.toUpperCase());
     if (idx === -1) {
       return res.status(404).json({ error: 'البلاغ غير موجود.' });
     }
@@ -3482,16 +3928,19 @@ app.put('/api/reports/:id', requireAdminAuth, async (req, res) => {
 });
 
 // GET Public Statistics for SaaS Counters on Landing Page
-app.get('/api/public/stats', async (req, res) => {
+app.get('/api/public/stats', publicReadRateLimiter, async (req, res) => {
   try {
     const teachers = await loadTeachers();
     const sessions = await loadSessions();
     const submissions = await loadSubmissions();
 
-    // Calculate unique institutions/schools
     const schoolsSet = new Set<string>();
-    teachers.forEach(t => { if (t.school) schoolsSet.add(t.school.trim()); });
-    sessions.forEach(s => { if (s.institution) schoolsSet.add(s.institution.trim()); });
+    teachers.forEach((t) => {
+      if (t.school) schoolsSet.add(t.school.trim());
+    });
+    sessions.forEach((s) => {
+      if (s.institution) schoolsSet.add(s.institution.trim());
+    });
 
     const numTeachers = Math.max(teachers.length, 12);
     const numSchools = Math.max(schoolsSet.size, 8);
@@ -3499,7 +3948,7 @@ app.get('/api/public/stats', async (req, res) => {
     const numSubmissions = Math.max(submissions.length, 156);
 
     const studentNames = new Set<string>();
-    submissions.forEach(sub => {
+    submissions.forEach((sub) => {
       const name = sub.studentName || sub.student_name;
       if (name) studentNames.add(name.trim().toLowerCase());
     });
@@ -3510,12 +3959,11 @@ app.get('/api/public/stats', async (req, res) => {
       schoolsCount: numSchools,
       sessionsCount: numSessions,
       submissionsCount: numSubmissions,
-      studentsCount: numStudents
+      studentsCount: numStudents,
     };
 
-    // Sync to Firestore asynchronously
-    syncStatsToFirestore(resultStats).catch(err => {
-      console.error("Async stats sync error:", err);
+    syncStatsToFirestore(resultStats).catch((err) => {
+      console.error('Async stats sync error:', err);
     });
 
     return res.json(resultStats);
@@ -3526,16 +3974,18 @@ app.get('/api/public/stats', async (req, res) => {
       schoolsCount: 8,
       sessionsCount: 24,
       submissionsCount: 156,
-      studentsCount: 142
+      studentsCount: 142,
     });
   }
 });
 
 // GET Landing Page config (Admin & Public)
-app.get('/api/landing-page', async (req, res) => {
+app.get('/api/landing-page', publicReadRateLimiter, async (req, res) => {
   try {
-    if (fs.existsSync(LANDING_PAGE_FILE)) {
-      const data = await fs.promises.readFile(LANDING_PAGE_FILE, 'utf-8');
+    ensureDataFilesExist();
+    const landingPageFile = getLandingPageFile();
+    if (fs.existsSync(landingPageFile)) {
+      const data = await fs.promises.readFile(landingPageFile, 'utf-8');
       return res.json(JSON.parse(data));
     }
 
@@ -3617,7 +4067,7 @@ app.get('/api/landing-page', async (req, res) => {
       ctaBtnSecondary: "دخول التلميذ للاستمارة"
     };
 
-    await fs.promises.writeFile(LANDING_PAGE_FILE, JSON.stringify(defaultConfig, null, 2), 'utf-8');
+    await fs.promises.writeFile(landingPageFile, JSON.stringify(defaultConfig, null, 2), 'utf-8');
     return res.json(defaultConfig);
   } catch (err) {
     console.error('Error loading landing page config:', err);
@@ -3633,7 +4083,8 @@ app.put('/api/landing-page', requireAdminAuth, async (req, res) => {
       return res.status(400).json({ error: 'بيانات غير صالحة.' });
     }
 
-    await fs.promises.writeFile(LANDING_PAGE_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    ensureDataFilesExist();
+    await fs.promises.writeFile(getLandingPageFile(), JSON.stringify(config, null, 2), 'utf-8');
     res.json({ success: true, config });
   } catch (err) {
     console.error('Error updating landing page config:', err);
@@ -4145,4 +4596,13 @@ async function startServer() {
   });
 }
 
-startServer();
+export { app, startServer };
+
+const shouldAutoStart =
+  process.env.PHILOSCAN_DISABLE_AUTO_LISTEN !== '1' &&
+  !process.env.NODE_TEST_CONTEXT &&
+  !process.argv.some((a) => a.includes('--test'));
+
+if (shouldAutoStart) {
+  startServer();
+}
